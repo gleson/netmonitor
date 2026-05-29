@@ -34,6 +34,7 @@ backups/
 .mypy_cache/
 
 # Documentos internos / planejamento (não publicados)
+CLAUDE.md
 analise-completa.txt
 app/resumo.md
 Estrutura do Catálogo*.md

@@ -146,8 +146,6 @@ Ajustes adicionais em `app/config.py` e, em runtime, no painel **Admin → Confi
 - **`app/views/`, `app/api/`** — páginas e endpoints JSON (consumidos pelo dashboard).
 - **`app/templates/`** — layout único `base.html` (Bootstrap escuro).
 
-Mais detalhes em [`CLAUDE.md`](CLAUDE.md).
-
 ---
 
 ## Segurança
