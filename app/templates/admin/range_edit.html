@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Editar Faixa - {{ ip_range.cidr }} - NetMonitor{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('admin.profiles') }}">Perfis</a></li>
+        <li class="breadcrumb-item"><a href="{{ url_for('admin.ranges', profile_id=profile.id) }}">{{ profile.name }} &mdash; Faixas</a></li>
+        <li class="breadcrumb-item active">Editar {{ ip_range.cidr }}</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header"><i class="bi bi-pencil"></i> Editar Faixa de IP</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('admin.range_edit', range_id=ip_range.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">CIDR *</label>
+                        <input type="text" name="cidr" class="form-control form-control-sm" required
+                               value="{{ ip_range.cidr }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descrição</label>
+                        <input type="text" name="description" class="form-control form-control-sm"
+                               value="{{ ip_range.description or '' }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Portas para Port Scan</label>
+                        <div class="form-check">
+                            <input type="radio" name="port_mode" value="default" class="form-check-input" id="portDefault"
+                                   {% if not ip_range.scan_all_ports and not ip_range.custom_ports %}checked{% endif %}>
+                            <label class="form-check-label" for="portDefault">Padrão (portas comuns)</label>
+                        </div>
+                        <div class="form-check">
+                            <input type="radio" name="port_mode" value="all" class="form-check-input" id="portAll"
+                                   {% if ip_range.scan_all_ports %}checked{% endif %}>
+                            <label class="form-check-label" for="portAll">Todas (1-65535) <small class="text-warning">- lento</small></label>
+                        </div>
+                        <div class="form-check">
+                            <input type="radio" name="port_mode" value="custom" class="form-check-input" id="portCustom"
+                                   {% if not ip_range.scan_all_ports and ip_range.custom_ports %}checked{% endif %}>
+                            <label class="form-check-label" for="portCustom">Personalizado</label>
+                        </div>
+                        <input type="text" name="custom_ports" class="form-control form-control-sm mt-2" id="customPortsInput"
+                               value="{{ ip_range.custom_ports or '' }}"
+                               placeholder="Ex: 22,80,443,8080 ou 1-1024"
+                               {% if ip_range.scan_all_ports or not ip_range.custom_ports %}disabled{% endif %}>
+                        <small class="text-muted">Separar por vírgula ou usar ranges (ex: 1-1024,8080,8443)</small>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input type="checkbox" name="enabled" class="form-check-input" id="rangeEnabled"
+                               {% if ip_range.enabled %}checked{% endif %}>
+                        <label class="form-check-label" for="rangeEnabled">Habilitada</label>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-sm btn-primary">
+                            <i class="bi bi-check"></i> Salvar
+                        </button>
+                        <a href="{{ url_for('admin.ranges', profile_id=profile.id) }}" class="btn btn-sm btn-outline-secondary">
+                            Cancelar
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const radios = document.querySelectorAll('input[name="port_mode"]');
+    const customInput = document.getElementById('customPortsInput');
+    radios.forEach(r => {
+        r.addEventListener('change', () => {
+            customInput.disabled = r.value !== 'custom' || !r.checked;
+            if (r.value === 'custom' && r.checked) customInput.focus();
+        });
+    });
+});
+</script>
+{% endblock %}

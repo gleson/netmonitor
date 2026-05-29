@@ -1,0 +1,60 @@
+/* NetMonitor — estilos customizados */
+
+body {
+    background-color: #1a1d21;
+    color: #e0e0e0;
+    font-size: 0.9rem;
+}
+
+.navbar-brand {
+    font-size: 1.1rem;
+}
+
+/* Cards do dashboard */
+.card {
+    transition: border-color 0.2s ease;
+}
+.card:hover {
+    border-color: #0dcaf0 !important;
+}
+
+/* Tabelas */
+.table-dark th {
+    font-weight: 600;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* Badge de status do device */
+.badge {
+    font-weight: 500;
+}
+
+/* Código (IPs, MACs) */
+code {
+    color: #0dcaf0;
+    font-size: 0.85rem;
+}
+
+/* Scan results */
+#scanOutput {
+    font-size: 0.78rem;
+    line-height: 1.4;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+    background: transparent;
+    padding: 0;
+    margin-bottom: 0;
+}
+.breadcrumb-item a {
+    color: #0dcaf0;
+    text-decoration: none;
+}
+
+/* Footer */
+footer {
+    font-size: 0.8rem;
+}

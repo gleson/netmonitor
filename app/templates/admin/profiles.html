@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Perfis de Rede - Admin - NetMonitor{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2><i class="bi bi-gear"></i> Perfis de Rede</h2>
+    <a href="{{ url_for('admin.profile_new') }}" class="btn btn-sm btn-primary">
+        <i class="bi bi-plus"></i> Novo Perfil
+    </a>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-dark table-striped table-hover">
+        <thead>
+            <tr>
+                <th>Nome</th>
+                <th>Descrição</th>
+                <th>Discovery (min)</th>
+                <th>Port Scan (min)</th>
+                <th>Max Scans</th>
+                <th>SNMP</th>
+                <th>Ativo</th>
+                <th>Faixas</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for profile in profiles %}
+            <tr>
+                <td><strong>{{ profile.name }}</strong></td>
+                <td>{{ profile.description or '-' }}</td>
+                <td>{{ profile.host_discovery_interval_minutes }}</td>
+                <td>{{ profile.port_scan_interval_minutes }}</td>
+                <td>{{ profile.max_concurrent_scans }}</td>
+                <td>{% if profile.snmp_enabled %}<span class="badge bg-success">Sim</span>{% else %}<span class="badge bg-secondary">Não</span>{% endif %}</td>
+                <td>{% if profile.is_active %}<span class="badge bg-success">Sim</span>{% else %}<span class="badge bg-danger">Não</span>{% endif %}</td>
+                <td>
+                    <a href="{{ url_for('admin.ranges', profile_id=profile.id) }}" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-hdd-network"></i> {{ profile.ip_ranges.count() }} faixas
+                    </a>
+                </td>
+                <td>
+                    <a href="{{ url_for('admin.profile_edit', profile_id=profile.id) }}" class="btn btn-sm btn-outline-warning">
+                        <i class="bi bi-pencil"></i>
+                    </a>
+                    <form method="POST" action="{{ url_for('admin.profile_delete', profile_id=profile.id) }}" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Remover este perfil e TODOS os dados associados?')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </form>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="9" class="text-center text-muted">Nenhum perfil cadastrado.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

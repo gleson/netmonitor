@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Histórico Diário - NetMonitor{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2><i class="bi bi-calendar-week"></i> Histórico Diário de Dispositivos</h2>
+    <a href="{{ url_for('devices.device_list') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Voltar
+    </a>
+</div>
+
+<div class="card bg-dark border-secondary mb-3">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-auto">
+                <label class="form-label small">Janela (dias)</label>
+                <input type="number" name="days" class="form-control form-control-sm"
+                       value="{{ days }}" min="1" max="365" style="width: 100px;">
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-sm btn-outline-info">
+                    <i class="bi bi-funnel"></i> Aplicar
+                </button>
+            </div>
+            <div class="col-auto ms-auto text-end small text-muted">
+                <div>Dispositivos no perfil: <strong>{{ total_devices }}</strong></div>
+                {% if tracking_started %}
+                <div>Histórico desde: <strong>{{ tracking_started }}</strong></div>
+                {% else %}
+                <div class="text-warning">Nenhum registro de presença ainda — aguarde o próximo scan.</div>
+                {% endif %}
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="table-responsive">
+    <table class="table table-dark table-striped table-hover align-middle">
+        <thead>
+            <tr>
+                <th style="width: 140px;">Data</th>
+                <th style="width: 110px;">Online</th>
+                <th>Dispositivos vistos online</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for date_str, devices in rows %}
+            <tr>
+                <td><code>{{ date_str }}</code></td>
+                <td><span class="badge bg-success">{{ devices|length }}</span></td>
+                <td>
+                    {% for d in devices %}
+                    <a href="{{ url_for('devices.device_detail', device_id=d.id) }}"
+                       class="badge bg-secondary text-decoration-none me-1 mb-1"
+                       title="{{ d.mac }} — {{ d.current_ip or '?' }}">
+                        {{ d.display_name }}
+                    </a>
+                    {% endfor %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="3" class="text-center text-muted py-4">
+                    Ainda não há registros de presença diária na janela selecionada.<br>
+                    <span class="small">O histórico passa a ser consolidado a partir do primeiro host discovery após esta atualização.</span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}

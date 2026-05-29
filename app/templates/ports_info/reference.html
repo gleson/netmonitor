@@ -1,0 +1,425 @@
+{% extends "base.html" %}
+{% block title %}Referência de Portas — NetMonitor{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2><i class="bi bi-diagram-3"></i> Referência de Portas</h2>
+    <span class="text-muted small">{{ ports|length }} porta(s) listada(s)</span>
+</div>
+
+<!-- Filtros -->
+<div class="card bg-dark border-secondary mb-3">
+    <div class="card-body py-2">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-md-4">
+                <label class="form-label small mb-1">Busca</label>
+                <input type="text" name="q" class="form-control form-control-sm"
+                       value="{{ search }}" placeholder="Porta, serviço, tag...">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small mb-1">Nível de Risco</label>
+                <select name="risk" class="form-select form-select-sm">
+                    <option value="">Todos</option>
+                    {% for r in ['CRÍTICO','ALTO','MÉDIO','BAIXO'] %}
+                    <option value="{{ r }}" {% if risk_filter == r %}selected{% endif %}>{{ r }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small mb-1">Protocolo</label>
+                <select name="proto" class="form-select form-select-sm">
+                    <option value="">Todos</option>
+                    {% for pr in ['TCP','UDP','TCP/UDP'] %}
+                    <option value="{{ pr }}" {% if proto_filter == pr %}selected{% endif %}>{{ pr }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3 d-flex gap-2">
+                <button type="submit" class="btn btn-sm btn-outline-info flex-fill">
+                    <i class="bi bi-search"></i> Filtrar
+                </button>
+                <a href="{{ url_for('ports_info.ports_reference') }}" class="btn btn-sm btn-outline-secondary">
+                    <i class="bi bi-x"></i>
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Tabela ordenável -->
+<div class="table-responsive">
+    <table class="table table-dark table-striped table-hover align-middle" id="portsTable">
+        <thead>
+            <tr>
+                <th class="sortable" data-col="0" style="cursor:pointer; white-space:nowrap;">
+                    Risco <i class="bi bi-caret-down text-secondary sort-icon"></i>
+                </th>
+                <th class="sortable" data-col="1" style="cursor:pointer;">
+                    Porta <i class="bi bi-caret-down text-secondary sort-icon"></i>
+                </th>
+                <th class="sortable" data-col="2" style="cursor:pointer;">
+                    Proto <i class="bi bi-caret-down text-secondary sort-icon"></i>
+                </th>
+                <th class="sortable" data-col="3" style="cursor:pointer;">
+                    Serviço <i class="bi bi-caret-down text-secondary sort-icon"></i>
+                </th>
+                <th>Descrição</th>
+                <th class="text-center">Enc.</th>
+                <th>Tags</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in ports %}
+            {% set risk_color = {
+                'CRÍTICO': 'danger',
+                'ALTO': 'warning',
+                'MÉDIO': 'info',
+                'BAIXO': 'success'
+            }.get(p.risk, 'secondary') %}
+            {% set risk_order = {
+                'CRÍTICO': '0',
+                'ALTO': '1',
+                'MÉDIO': '2',
+                'BAIXO': '3'
+            }.get(p.risk, '9') %}
+            <tr>
+                <td data-sort="{{ risk_order }}">
+                    <span class="badge bg-{{ risk_color }}">{{ p.risk }}</span>
+                </td>
+                <td data-sort="{{ '%05d' % p.port }}">
+                    <strong>{{ p.port }}</strong>
+                </td>
+                <td data-sort="{{ p.protocol }}">
+                    <span class="badge bg-secondary">{{ p.protocol }}</span>
+                </td>
+                <td data-sort="{{ p.service }}">{{ p.service }}</td>
+                <td class="text-muted small" style="max-width:300px;">{{ p.description }}</td>
+                <td class="text-center">
+                    {% if p.has_encryption %}
+                    <i class="bi bi-lock-fill text-success" title="Tráfego criptografado"></i>
+                    {% else %}
+                    <i class="bi bi-unlock text-danger" title="Texto claro — sem criptografia nativa"></i>
+                    {% endif %}
+                </td>
+                <td style="max-width:200px;">
+                    {% for tag in p.tags %}
+                    <span class="badge bg-dark border border-secondary text-light me-1 mb-1" style="font-size:0.75rem;">{{ tag }}</span>
+                    {% endfor %}
+                </td>
+                <td class="text-nowrap">
+                    <button class="btn btn-sm btn-outline-info"
+                            data-bs-toggle="modal"
+                            data-bs-target="#portModal{{ p.port }}{{ p.protocol | replace('/','') }}">
+                        <i class="bi bi-eye"></i>
+                    </button>
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="8" class="text-center text-muted py-4">
+                    Nenhuma porta encontrada com os filtros selecionados.
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- ================================================================
+     MODAIS — um por porta
+     ================================================================ -->
+{% for p in ports %}
+{% set risk_color = {
+    'CRÍTICO': 'danger',
+    'ALTO': 'warning',
+    'MÉDIO': 'info',
+    'BAIXO': 'success'
+}.get(p.risk, 'secondary') %}
+{% set modal_id = "portModal" ~ p.port ~ (p.protocol | replace('/','')) %}
+
+<div class="modal fade" id="{{ modal_id }}" tabindex="-1"
+     aria-labelledby="{{ modal_id }}Label" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content bg-dark text-light border-secondary">
+
+            <!-- Header -->
+            <div class="modal-header border-secondary py-2">
+                <h5 class="modal-title" id="{{ modal_id }}Label">
+                    <span class="badge bg-{{ risk_color }} me-2">{{ p.risk }}</span>
+                    <strong>{{ p.port }}/{{ p.protocol }}</strong>
+                    &mdash; {{ p.service }}
+                    {% if p.has_encryption %}
+                    <i class="bi bi-lock-fill text-success ms-2" title="Criptografado nativamente"></i>
+                    {% else %}
+                    <i class="bi bi-unlock text-danger ms-2" title="Texto claro — sem criptografia nativa"></i>
+                    {% endif %}
+                </h5>
+                <button type="button" class="btn-close btn-close-white"
+                        data-bs-dismiss="modal" aria-label="Fechar"></button>
+            </div>
+
+            <div class="modal-body">
+
+                <!-- 1. Identificação Básica -->
+                <div class="card bg-dark border-secondary mb-3">
+                    <div class="card-header py-1 border-secondary">
+                        <small class="text-uppercase text-muted fw-bold">
+                            <i class="bi bi-info-circle me-1"></i>Identificação Básica
+                        </small>
+                    </div>
+                    <div class="card-body py-2">
+                        <div class="row g-2 small">
+                            <div class="col-6 col-sm-3">
+                                <span class="text-muted d-block">Porta</span>
+                                <strong>{{ p.port }}</strong>
+                            </div>
+                            <div class="col-6 col-sm-3">
+                                <span class="text-muted d-block">Protocolo</span>
+                                {{ p.protocol }}
+                            </div>
+                            <div class="col-6 col-sm-3">
+                                <span class="text-muted d-block">Status IANA</span>
+                                {% if p.iana_status == 'Registrada' %}
+                                <span class="badge bg-success">{{ p.iana_status }}</span>
+                                {% elif p.iana_status == 'Não Oficial' %}
+                                <span class="badge bg-warning text-dark">{{ p.iana_status }}</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ p.iana_status }}</span>
+                                {% endif %}
+                            </div>
+                            <div class="col-6 col-sm-3">
+                                <span class="text-muted d-block">Criptografia</span>
+                                {% if p.has_encryption %}
+                                <span class="text-success"><i class="bi bi-lock-fill"></i> Nativa</span>
+                                {% else %}
+                                <span class="text-danger"><i class="bi bi-unlock"></i> Texto claro</span>
+                                {% endif %}
+                            </div>
+                            {% if p.related_ports %}
+                            <div class="col-12">
+                                <span class="text-muted">Portas Relacionadas:</span>
+                                <code class="ms-1">{{ p.related_ports }}</code>
+                            </div>
+                            {% endif %}
+                            {% if p.systems %}
+                            <div class="col-12">
+                                <span class="text-muted">Sistemas / Implementações:</span>
+                                <span class="ms-1">{{ p.systems }}</span>
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. Descrição e Contexto -->
+                <div class="card bg-dark border-secondary mb-3">
+                    <div class="card-header py-1 border-secondary">
+                        <small class="text-uppercase text-muted fw-bold">
+                            <i class="bi bi-card-text me-1"></i>Descrição e Contexto
+                        </small>
+                    </div>
+                    <div class="card-body py-2 small">
+                        <p class="mb-0">{{ p.uses }}</p>
+                    </div>
+                </div>
+
+                <!-- 3. Riscos, Vetores e CVEs -->
+                <div class="card bg-dark border-{{ risk_color }} mb-3">
+                    <div class="card-header py-1 border-{{ risk_color }}">
+                        <small class="text-uppercase fw-bold text-{{ risk_color }}">
+                            <i class="bi bi-shield-exclamation me-1"></i>Riscos e Vetores de Ataque
+                        </small>
+                    </div>
+                    <div class="card-body py-2 small">
+                        <p class="mb-0">{{ p.risks }}</p>
+                        {% if p.cves %}
+                        <div class="mt-2 pt-2 border-top border-secondary">
+                            <span class="text-muted fw-bold">CVEs Notáveis:</span>
+                            <code class="ms-1 text-warning">{{ p.cves }}</code>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- 4. Quando é Normal / Indícios de Risco (lado a lado) -->
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <div class="card bg-dark border-success h-100">
+                            <div class="card-header py-1 border-success">
+                                <small class="text-uppercase fw-bold text-success">
+                                    <i class="bi bi-check-circle me-1"></i>Quando é Normal
+                                </small>
+                            </div>
+                            <div class="card-body py-2 small">{{ p.when_ok }}</div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="card bg-dark border-danger h-100">
+                            <div class="card-header py-1 border-danger">
+                                <small class="text-uppercase fw-bold text-danger">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>Indícios de Risco
+                                </small>
+                            </div>
+                            <div class="card-body py-2 small">{{ p.when_alert }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. Boas Práticas e Mitigação -->
+                <div class="card bg-dark border-secondary mb-3">
+                    <div class="card-header py-1 border-secondary">
+                        <small class="text-uppercase text-muted fw-bold">
+                            <i class="bi bi-shield-check me-1"></i>Boas Práticas e Mitigação
+                        </small>
+                    </div>
+                    <div class="card-body py-2 small">{{ p.analysis }}</div>
+                </div>
+
+                <!-- 6. Comandos de Análise e Troubleshooting -->
+                {% if p.commands %}
+                <div class="card bg-dark border-secondary mb-3">
+                    <div class="card-header py-1 border-secondary">
+                        <small class="text-uppercase text-muted fw-bold">
+                            <i class="bi bi-terminal me-1"></i>Comandos de Análise e Troubleshooting
+                        </small>
+                    </div>
+                    <div class="card-body py-0">
+                        {% for cmd in p.commands %}
+                        <div class="py-2 {% if not loop.last %}border-bottom border-secondary{% endif %}">
+                            <!-- Cabeçalho do comando -->
+                            <div class="d-flex flex-wrap gap-2 align-items-center mb-1">
+                                <span class="badge bg-secondary">{{ cmd.tool }}</span>
+                                <span class="badge bg-dark border border-secondary text-muted">{{ cmd.os }}</span>
+                                <span class="small text-muted">{{ cmd.description }}</span>
+                            </div>
+                            <!-- Bloco de código -->
+                            <pre class="bg-black text-light rounded p-2 mb-2"
+                                 style="font-size:0.8rem; overflow-x:auto; margin:0;"><code>{{ cmd.command }}</code></pre>
+                            <!-- Esperado vs Anômalo -->
+                            <div class="row g-1 small">
+                                <div class="col-md-6">
+                                    <div class="d-flex gap-1 align-items-start">
+                                        <i class="bi bi-check-circle-fill text-success mt-1 flex-shrink-0"></i>
+                                        <div>
+                                            <span class="text-muted fw-semibold">Esperado: </span>
+                                            <span>{{ cmd.expected }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="d-flex gap-1 align-items-start">
+                                        <i class="bi bi-exclamation-triangle-fill text-warning mt-1 flex-shrink-0"></i>
+                                        <div>
+                                            <span class="text-muted fw-semibold">Anômalo: </span>
+                                            <span>{{ cmd.anomaly }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- 7. Ferramentas Recomendadas -->
+                {% if p.tools %}
+                <div class="card bg-dark border-secondary">
+                    <div class="card-header py-1 border-secondary">
+                        <small class="text-uppercase text-muted fw-bold">
+                            <i class="bi bi-tools me-1"></i>Ferramentas Recomendadas
+                        </small>
+                    </div>
+                    <div class="card-body py-2">
+                        <div class="d-flex flex-wrap gap-2">
+                            {% for tool in p.tools %}
+                            <span class="badge bg-secondary text-light" style="font-size:0.8rem;">{{ tool }}</span>
+                            {% endfor %}
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+
+            </div><!-- /modal-body -->
+
+            <div class="modal-footer border-secondary py-2">
+                <div class="d-flex flex-wrap gap-1 me-auto">
+                    {% for tag in p.tags %}
+                    <span class="badge bg-dark border border-secondary text-muted">{{ tag }}</span>
+                    {% endfor %}
+                </div>
+                <button type="button" class="btn btn-sm btn-secondary"
+                        data-bs-dismiss="modal">Fechar</button>
+            </div>
+
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<!-- ================================================================
+     JS — ordenação client-side da tabela
+     ================================================================ -->
+<script>
+(function () {
+    const table = document.getElementById('portsTable');
+    if (!table) return;
+
+    let sortCol = -1;
+    let sortAsc = true;
+
+    function getCellSortValue(row, col) {
+        const cell = row.cells[col];
+        const ds = cell.getAttribute('data-sort');
+        if (ds !== null) return ds;
+        return cell.innerText.trim();
+    }
+
+    function compareValues(a, b) {
+        const na = parseFloat(a), nb = parseFloat(b);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return a.localeCompare(b, 'pt-BR', { numeric: true });
+    }
+
+    function sortTable(col) {
+        const tbody = table.tBodies[0];
+        const rows = Array.from(tbody.rows);
+
+        if (sortCol === col) {
+            sortAsc = !sortAsc;
+        } else {
+            sortCol = col;
+            sortAsc = true;
+        }
+
+        rows.sort(function (a, b) {
+            const va = getCellSortValue(a, col);
+            const vb = getCellSortValue(b, col);
+            const cmp = compareValues(va, vb);
+            return sortAsc ? cmp : -cmp;
+        });
+
+        rows.forEach(function (r) { tbody.appendChild(r); });
+
+        // Atualiza ícones dos cabeçalhos
+        table.querySelectorAll('th.sortable').forEach(function (th, i) {
+            const icon = th.querySelector('.sort-icon');
+            if (!icon) return;
+            if (i === col) {
+                icon.className = sortAsc
+                    ? 'bi bi-caret-up-fill text-info sort-icon'
+                    : 'bi bi-caret-down-fill text-info sort-icon';
+            } else {
+                icon.className = 'bi bi-caret-down text-secondary sort-icon';
+            }
+        });
+    }
+
+    table.querySelectorAll('th.sortable').forEach(function (th) {
+        const col = parseInt(th.getAttribute('data-col'));
+        th.addEventListener('click', function () { sortTable(col); });
+    });
+})();
+</script>
+{% endblock %}

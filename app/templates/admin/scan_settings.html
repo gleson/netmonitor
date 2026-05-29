@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Configurações de Scan - NetMonitor{% endblock %}
+
+{% block content %}
+<h2 class="mb-3"><i class="bi bi-sliders"></i> Configurações de Scan</h2>
+
+<div class="card bg-dark border-secondary">
+    <div class="card-body">
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <div class="mb-3">
+                <label class="form-label">
+                    Intervalo do Quick Check (HOST_DOWN)
+                </label>
+                <div class="input-group" style="max-width: 240px;">
+                    <input type="number" min="1" max="60"
+                           name="quick_check_interval"
+                           class="form-control"
+                           value="{{ quick_check_interval }}">
+                    <span class="input-group-text">minutos</span>
+                </div>
+                <div class="form-text text-muted">
+                    Verifica via ping/ARP os dispositivos marcados com
+                    <em>"Alertar quando ficar offline"</em>. Após duas
+                    falhas consecutivas gera alerta destacado.
+                    Padrão: {{ default_quick }} min. Intervalo permitido: 1–60.
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary">
+                <i class="bi bi-save"></i> Salvar
+            </button>
+            <a href="{{ url_for('admin.profiles') }}" class="btn btn-outline-secondary">Voltar</a>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,276 @@
+{% extends "base.html" %}
+{% block title %}Alertas - NetMonitor{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2><i class="bi bi-bell"></i> Alertas</h2>
+    <div class="d-flex gap-2">
+        {% if active_profile %}
+        <div class="dropdown">
+            <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
+                <i class="bi bi-download"></i> Exportar
+            </button>
+            <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end">
+                <li><a class="dropdown-item" href="{{ url_for('export.export_alerts', profile_id=active_profile.id, format='csv', status=selected_status) }}"><i class="bi bi-filetype-csv"></i> CSV</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('export.export_alerts', profile_id=active_profile.id, format='json', status=selected_status) }}"><i class="bi bi-filetype-json"></i> JSON</a></li>
+            </ul>
+        </div>
+        {% endif %}
+        <form method="POST" action="{{ url_for('alerts.acknowledge_all') }}" class="d-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if active_profile %}
+            <input type="hidden" name="profile_id" value="{{ active_profile.id }}">
+            {% endif %}
+            <button type="submit" class="btn btn-sm btn-outline-success" onclick="return confirm('Reconhecer todos os alertas abertos?')">
+                <i class="bi bi-check-all"></i> Reconhecer Todos
+            </button>
+        </form>
+    </div>
+</div>
+
+{% if priority_alerts %}
+<div class="alert alert-danger d-flex flex-column gap-1 mb-3" role="alert">
+    <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-exclamation-octagon-fill fs-4"></i>
+        <strong>
+            {{ priority_alerts|length }} host(s) OFFLINE confirmado(s) — requer atenção imediata
+        </strong>
+    </div>
+    <ul class="mb-0 ps-4 small">
+    {% for a in priority_alerts %}
+        <li>
+            {% if a.device %}
+            <a href="{{ url_for('devices.device_detail', device_id=a.device_id) }}" class="text-white text-decoration-underline">
+                {{ a.device.display_name }}
+            </a>
+            {% if a.device.current_ip %}<code class="text-white">{{ a.device.current_ip }}</code>{% endif %}
+            —
+            {% endif %}
+            {{ a.message }}
+            <span class="text-white-50">({{ a.created_at|localtime }})</span>
+        </li>
+    {% endfor %}
+    </ul>
+</div>
+{% endif %}
+
+<!-- Filtros -->
+<div class="card bg-dark border-secondary mb-3">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small">Dispositivo (nome, hostname, IP ou MAC)</label>
+                <input type="text" name="device" class="form-control form-control-sm"
+                       placeholder="Ex.: 192.168.1.5, android, servidor..."
+                       value="{{ device_search }}">
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small">Tipo</label>
+                <select name="type" class="form-select form-select-sm">
+                    <option value="">Todos</option>
+                    {% for at in alert_types %}
+                    <option value="{{ at.value }}" {% if selected_type == at.value %}selected{% endif %}>{{ at.value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1">
+                <label class="form-label small">Severidade</label>
+                <select name="severity" class="form-select form-select-sm">
+                    <option value="">Todas</option>
+                    {% for s in severities %}
+                    <option value="{{ s.value }}" {% if selected_severity == s.value %}selected{% endif %}>{{ s.value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-1">
+                <label class="form-label small">Status</label>
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">Todos</option>
+                    <option value="open" {% if selected_status == 'open' %}selected{% endif %}>Abertos</option>
+                    <option value="acknowledged" {% if selected_status == 'acknowledged' %}selected{% endif %}>Reconhecidos</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <button type="submit" class="btn btn-sm btn-outline-info w-100">
+                    <i class="bi bi-search"></i> Filtrar
+                </button>
+            </div>
+            {% if device_search or selected_type or selected_severity or selected_status %}
+            <div class="col-md-1">
+                <a href="{{ url_for('alerts.alert_list') }}" class="btn btn-sm btn-outline-secondary w-100" title="Limpar filtros">
+                    <i class="bi bi-x-circle"></i> Limpar
+                </a>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<!-- Form de seleção em massa -->
+<form method="POST" action="{{ url_for('alerts.acknowledge_selected') }}" id="bulkForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <!-- Barra de ação selecionados (aparece ao selecionar) -->
+    <div id="selectionBar" class="alert alert-dark border border-warning d-none mb-2 py-2 px-3 d-flex align-items-center gap-3">
+        <span class="text-warning fw-semibold">
+            <i class="bi bi-check2-square"></i>
+            <span id="selectionCount">0</span> alerta(s) selecionado(s)
+        </span>
+        <button type="submit" class="btn btn-sm btn-success"
+                onclick="return confirm('Reconhecer os alertas selecionados?')">
+            <i class="bi bi-check-lg"></i> Reconhecer Selecionados
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary ms-auto" id="clearSelectionBtn">
+            <i class="bi bi-x"></i> Limpar seleção
+        </button>
+    </div>
+
+    <!-- Tabela de alertas -->
+    <div class="table-responsive">
+        <table class="table table-dark table-striped table-hover" id="alertsTable">
+            <thead>
+                <tr>
+                    <th style="width:36px">
+                        <input class="form-check-input" type="checkbox" id="selectAll"
+                               title="Selecionar todos os abertos nesta página">
+                    </th>
+                    <th>Severidade</th>
+                    <th>Tipo</th>
+                    <th>Dispositivo</th>
+                    <th>Mensagem</th>
+                    <th>Criado em</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for alert in alerts %}
+                <tr class="{% if alert.is_priority and not alert.is_acknowledged %}table-danger fw-semibold{% endif %}">
+                    <td>
+                        {% if not alert.is_acknowledged %}
+                        <input class="form-check-input alert-checkbox" type="checkbox"
+                               name="alert_ids" value="{{ alert.id }}">
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if alert.is_priority and not alert.is_acknowledged %}
+                        <span class="badge bg-danger"><i class="bi bi-exclamation-octagon-fill"></i> PRIORIDADE</span>
+                        {% elif alert.severity.value == 'CRITICAL' %}
+                        <span class="badge bg-danger">CRITICAL</span>
+                        {% elif alert.severity.value == 'WARNING' %}
+                        <span class="badge bg-warning text-dark">WARNING</span>
+                        {% else %}
+                        <span class="badge bg-info">INFO</span>
+                        {% endif %}
+                    </td>
+                    <td><span class="badge bg-secondary">{{ alert.alert_type.value }}</span></td>
+                    <td>
+                        {% if alert.device %}
+                        <a href="{{ url_for('devices.device_detail', device_id=alert.device_id) }}" class="text-info text-decoration-none">
+                            {{ alert.device.display_name }}
+                        </a>
+                        {% if alert.device.current_ip %}
+                        <br><code class="text-muted small">{{ alert.device.current_ip }}</code>
+                        {% endif %}
+                        {% else %}
+                        <span class="text-muted">-</span>
+                        {% endif %}
+                    </td>
+                    <td>{{ alert.message }}</td>
+                    <td class="text-nowrap">{{ alert.created_at|localtime }}</td>
+                    <td>
+                        {% if alert.is_acknowledged %}
+                        <span class="badge bg-success">Reconhecido</span>
+                        {% else %}
+                        <span class="badge bg-dark border border-warning">Aberto</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if not alert.is_acknowledged %}
+                        <form method="POST" action="{{ url_for('alerts.acknowledge', alert_id=alert.id) }}" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-success" title="Reconhecer este alerta">
+                                <i class="bi bi-check"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="8" class="text-center text-muted">Nenhum alerta encontrado.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</form>
+
+<!-- Paginação -->
+{% if pagination.pages > 1 %}
+{% set qs = "device=" ~ device_search ~ "&type=" ~ selected_type ~ "&severity=" ~ selected_severity ~ "&status=" ~ selected_status %}
+<nav>
+    <ul class="pagination pagination-sm justify-content-center">
+        {% if pagination.has_prev %}
+        <li class="page-item">
+            <a class="page-link" href="?page={{ pagination.prev_num }}&{{ qs }}">&laquo;</a>
+        </li>
+        {% endif %}
+        {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if p %}
+            <li class="page-item {% if p == pagination.page %}active{% endif %}">
+                <a class="page-link" href="?page={{ p }}&{{ qs }}">{{ p }}</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+        {% endfor %}
+        {% if pagination.has_next %}
+        <li class="page-item">
+            <a class="page-link" href="?page={{ pagination.next_num }}&{{ qs }}">&raquo;</a>
+        </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+
+<script>
+(function () {
+    const selectAll = document.getElementById('selectAll');
+    const selectionBar = document.getElementById('selectionBar');
+    const selectionCount = document.getElementById('selectionCount');
+    const clearBtn = document.getElementById('clearSelectionBtn');
+
+    function getCheckboxes() {
+        return Array.from(document.querySelectorAll('.alert-checkbox'));
+    }
+
+    function updateBar() {
+        const checked = getCheckboxes().filter(c => c.checked);
+        const n = checked.length;
+        selectionCount.textContent = n;
+        selectionBar.classList.toggle('d-none', n === 0);
+        // Atualiza estado do select-all
+        const all = getCheckboxes();
+        selectAll.indeterminate = n > 0 && n < all.length;
+        selectAll.checked = all.length > 0 && n === all.length;
+    }
+
+    selectAll.addEventListener('change', function () {
+        getCheckboxes().forEach(c => { c.checked = this.checked; });
+        updateBar();
+    });
+
+    document.querySelectorAll('.alert-checkbox').forEach(cb => {
+        cb.addEventListener('change', updateBar);
+    });
+
+    clearBtn.addEventListener('click', function () {
+        getCheckboxes().forEach(c => { c.checked = false; });
+        selectAll.checked = false;
+        selectAll.indeterminate = false;
+        updateBar();
+    });
+})();
+</script>
+{% endblock %}

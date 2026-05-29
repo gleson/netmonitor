@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% block title %}Scans - NetMonitor{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2><i class="bi bi-clock-history"></i> Histórico de Scans</h2>
+    <span class="text-muted small">{{ pagination.total }} registro(s)</span>
+</div>
+
+<!-- Filtros -->
+<div class="card bg-dark border-secondary mb-3">
+    <div class="card-body">
+        <form method="GET" class="row g-2 align-items-end">
+            <div class="col-md-3">
+                <label class="form-label small">Tipo</label>
+                <select name="type" class="form-select form-select-sm">
+                    <option value="">Todos</option>
+                    {% for st in scan_types %}
+                    <option value="{{ st.value }}" {% if selected_type == st.value %}selected{% endif %}>{{ st.value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <label class="form-label small">Status</label>
+                <select name="status" class="form-select form-select-sm">
+                    <option value="">Todos</option>
+                    {% for ss in scan_statuses %}
+                    <option value="{{ ss.value }}" {% if selected_status == ss.value %}selected{% endif %}>{{ ss.value }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-2">
+                <button type="submit" class="btn btn-sm btn-outline-info w-100">
+                    <i class="bi bi-search"></i> Filtrar
+                </button>
+            </div>
+            {% if selected_type or selected_status %}
+            <div class="col-md-2">
+                <a href="{{ url_for('scans.scan_list') }}" class="btn btn-sm btn-outline-secondary w-100">
+                    <i class="bi bi-x-circle"></i> Limpar
+                </a>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<!-- Tabela -->
+<div class="table-responsive">
+    <table class="table table-dark table-striped table-hover table-sm">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Tipo</th>
+                <th>Host</th>
+                <th>Status</th>
+                <th>Início</th>
+                <th>Duração</th>
+                <th>Resultado</th>
+                <th>Erro</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in scans %}
+            <tr>
+                <td class="text-muted small">{{ s.id }}</td>
+                <td>
+                    {% if s.scan_type.value == 'PORT_SCAN' %}
+                    <span class="badge bg-info text-dark">PORT_SCAN</span>
+                    {% elif s.scan_type.value == 'HOST_DISCOVERY' %}
+                    <span class="badge bg-success">DISCOVERY</span>
+                    {% elif s.scan_type.value == 'MOBILE_SCAN' %}
+                    <span class="badge bg-primary">MOBILE ID</span>
+                    {% else %}
+                    <span class="badge bg-secondary">{{ s.scan_type.value }}</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if s.target_ip %}
+                    <code>{{ s.target_ip }}</code>
+                    {% else %}
+                    <span class="text-muted">Todos</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if s.status.value == 'SUCCESS' %}
+                    <span class="badge bg-success">OK</span>
+                    {% elif s.status.value == 'ERROR' %}
+                    <span class="badge bg-danger">ERRO</span>
+                    {% else %}
+                    <span class="badge bg-warning text-dark">{{ s.status.value }}</span>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap">{{ s.started_at|localtime_full if s.started_at else '-' }}</td>
+                <td class="text-nowrap">
+                    {% if s.started_at and s.finished_at %}
+                        {% set secs = (s.finished_at - s.started_at).total_seconds()|int %}
+                        {% if secs < 60 %}
+                            {{ secs }}s
+                        {% else %}
+                            {{ (secs // 60) }}m {{ (secs % 60) }}s
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td>
+                    {% if s.scan_type.value == 'MOBILE_SCAN' %}
+                        {{ s.result_summary or s.error_message or '-' }}
+                    {% elif s.hosts_found is not none %}
+                        {% if s.scan_type.value == 'HOST_DISCOVERY' %}
+                            {{ s.hosts_found }} host{{ 's' if s.hosts_found != 1 else '' }}
+                        {% elif s.scan_type.value == 'PORT_SCAN' %}
+                            {{ s.hosts_found }} porta{{ 's' if s.hosts_found != 1 else '' }}
+                        {% else %}
+                            {{ s.hosts_found }}
+                        {% endif %}
+                    {% else %}
+                        -
+                    {% endif %}
+                </td>
+                <td class="text-danger small">
+                    {% if s.scan_type.value != 'MOBILE_SCAN' %}{{ s.error_message or '' }}{% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="8" class="text-center text-muted">Nenhum scan encontrado.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Paginação -->
+{% if pagination.pages > 1 %}
+<nav>
+    <ul class="pagination pagination-sm justify-content-center">
+        {% if pagination.has_prev %}
+        <li class="page-item">
+            <a class="page-link" href="?page={{ pagination.prev_num }}&type={{ selected_type }}&status={{ selected_status }}">&laquo;</a>
+        </li>
+        {% endif %}
+        {% for p in pagination.iter_pages(left_edge=1, right_edge=1, left_current=2, right_current=2) %}
+            {% if p %}
+            <li class="page-item {% if p == pagination.page %}active{% endif %}">
+                <a class="page-link" href="?page={{ p }}&type={{ selected_type }}&status={{ selected_status }}">{{ p }}</a>
+            </li>
+            {% else %}
+            <li class="page-item disabled"><span class="page-link">...</span></li>
+            {% endif %}
+        {% endfor %}
+        {% if pagination.has_next %}
+        <li class="page-item">
+            <a class="page-link" href="?page={{ pagination.next_num }}&type={{ selected_type }}&status={{ selected_status }}">&raquo;</a>
+        </li>
+        {% endif %}
+    </ul>
+</nav>
+{% endif %}
+{% endblock %}

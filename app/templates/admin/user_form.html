@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Editar' if user else 'Novo' }} Usuário - Admin - NetMonitor{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>
+        <i class="bi bi-person-{{ 'gear' if user else 'plus' }}"></i>
+        {{ 'Editar Usuário' if user else 'Novo Usuário' }}
+    </h2>
+    <a href="{{ url_for('admin.user_list') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Voltar
+    </a>
+</div>
+
+<div class="row">
+    <div class="col-md-5">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="mb-3">
+                        <label class="form-label">Nome de usuário</label>
+                        <input type="text" name="username" class="form-control bg-dark text-light border-secondary"
+                               value="{{ user.username if user else '' }}" required autofocus>
+                    </div>
+
+                    {% if not user %}
+                    <div class="mb-3">
+                        <label class="form-label">Senha</label>
+                        <input type="password" name="password" class="form-control bg-dark text-light border-secondary"
+                               required autocomplete="new-password">
+                        <div class="form-text text-muted">Mínimo 10 caracteres, com letras e números.</div>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label class="form-label">Role</label>
+                        <select name="role" class="form-select bg-dark text-light border-secondary">
+                            {% for r in roles %}
+                            <option value="{{ r }}" {{ 'selected' if (user and user.role == r) or (not user and r == 'viewer') }}>
+                                {{ r }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text text-muted">
+                            <strong>viewer</strong> — apenas leitura &nbsp;|&nbsp;
+                            <strong>operator</strong> — edita e dispara scans &nbsp;|&nbsp;
+                            <strong>admin</strong> — acesso total
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check-lg"></i> {{ 'Salvar' if user else 'Criar' }}
+                        </button>
+                        <a href="{{ url_for('admin.user_list') }}" class="btn btn-outline-secondary">Cancelar</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

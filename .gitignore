@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+*.db
+*.db.gz
+
+# Instance / runtime data (banco SQLite, uploads)
+instance/
+
+# Backups do banco (contêm dados reais)
+backups/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Documentos internos / planejamento (não publicados)
+analise-completa.txt
+app/resumo.md
+Estrutura do Catálogo*.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Migrations auto-generated (keep versions/)
+migrations/versions/*.pyc

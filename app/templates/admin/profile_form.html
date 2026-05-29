@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Editar' if profile else 'Novo' }} Perfil - Admin - NetMonitor{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('admin.profiles') }}">Perfis</a></li>
+        <li class="breadcrumb-item active">{{ 'Editar ' + profile.name if profile else 'Novo Perfil' }}</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="mb-3">
+                        <label class="form-label">Nome *</label>
+                        <input type="text" name="name" class="form-control" required
+                               value="{{ profile.name if profile else '' }}" placeholder="Ex.: Casa, Cliente 01">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descrição</label>
+                        <textarea name="description" class="form-control" rows="2">{{ profile.description if profile else '' }}</textarea>
+                    </div>
+
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Intervalo Discovery (min)</label>
+                            <input type="number" name="host_discovery_interval" class="form-control" min="1"
+                                   value="{{ profile.host_discovery_interval_minutes if profile else 45 }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Intervalo Port Scan (min)</label>
+                            <input type="number" name="port_scan_interval" class="form-control" min="1"
+                                   value="{{ profile.port_scan_interval_minutes if profile else 4 }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Max Scans Simultâneos</label>
+                            <input type="number" name="max_concurrent_scans" class="form-control" min="1" max="20"
+                                   value="{{ profile.max_concurrent_scans if profile else 3 }}">
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-4">
+
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <div class="form-check form-switch">
+                                <input type="checkbox" name="snmp_enabled" class="form-check-input" id="snmpEnabled"
+                                       {% if profile and profile.snmp_enabled %}checked{% endif %}>
+                                <label class="form-check-label" for="snmpEnabled">SNMP Habilitado</label>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Community SNMP</label>
+                            <input type="text" name="snmp_community" class="form-control"
+                                   value="{{ profile.snmp_community if profile else 'public' }}"
+                                   autocomplete="off">
+                            <div class="form-text text-muted">Cifrada no banco quando <code>FERNET_KEY</code> está configurado.</div>
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-4">
+                    <h6 class="text-muted mb-3">
+                        <i class="bi bi-bell"></i> Notificações de alertas
+                    </h6>
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Webhook URL</label>
+                            <input type="url" name="webhook_url" class="form-control"
+                                   value="{{ profile.webhook_url if profile else '' }}"
+                                   placeholder="https://exemplo.com/hooks/netmonitor">
+                            <div class="form-text">POST JSON com payload do alerta.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Email para alertas</label>
+                            <input type="email" name="notify_email" class="form-control"
+                                   value="{{ profile.notify_email if profile else '' }}"
+                                   placeholder="oncall@exemplo.com">
+                            <div class="form-text">Requer SMTP_HOST configurado via env.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Severidade mínima para notificar</label>
+                            {% set cur_sev = profile.notify_min_severity if profile else 'CRITICAL' %}
+                            <select name="notify_min_severity" class="form-select">
+                                <option value="CRITICAL" {{ 'selected' if cur_sev == 'CRITICAL' else '' }}>Apenas CRITICAL</option>
+                                <option value="WARNING" {{ 'selected' if cur_sev == 'WARNING' else '' }}>WARNING e acima</option>
+                                <option value="INFO" {{ 'selected' if cur_sev == 'INFO' else '' }}>Tudo (INFO e acima)</option>
+                            </select>
+                            <div class="form-text">
+                                WARNING inclui dispositivo não autorizado, conflito de IP e mudança de IP.
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary my-4">
+                    <h6 class="text-muted mb-3">
+                        <i class="bi bi-hdd-network"></i> Portas padrão para scan
+                    </h6>
+                    <div class="mb-3">
+                        <label class="form-label">Lista de portas (CSV ou ranges)</label>
+                        <input type="text" name="default_ports" class="form-control font-monospace"
+                               value="{{ profile.default_ports if profile else '' }}"
+                               placeholder="Ex.: 22,80,443,8080-8090 (vazio = usar padrão do sistema)">
+                        <div class="form-text">
+                            Define as portas escaneadas neste perfil quando o IpRange não tem configuração específica.
+                            Deixe em branco para usar a lista padrão do sistema
+                            (<code>21,22,23,25,53,80,443,3306,3389...</code>).
+                            Formato aceito pelo nmap: <code>22,80,443</code> &nbsp;|&nbsp;
+                            <code>1-1024</code> &nbsp;|&nbsp; <code>22,80,1000-2000</code>.
+                        </div>
+                    </div>
+
+                    {% if profile %}
+                    <hr class="border-secondary my-4">
+                    <div class="form-check form-switch">
+                        <input type="checkbox" name="is_active" class="form-check-input" id="isActive"
+                               {% if profile.is_active %}checked{% endif %}>
+                        <label class="form-check-label" for="isActive">Perfil Ativo</label>
+                    </div>
+                    {% endif %}
+
+                    <div class="mt-4">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-check"></i> {{ 'Salvar' if profile else 'Criar Perfil' }}
+                        </button>
+                        <a href="{{ url_for('admin.profiles') }}" class="btn btn-outline-secondary ms-2">Cancelar</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,683 @@
+{% extends "base.html" %}
+{% block title %}{{ device.display_name }} - NetMonitor{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('devices.device_list') }}">Dispositivos</a></li>
+        <li class="breadcrumb-item active">{{ device.display_name }}</li>
+    </ol>
+</nav>
+
+<div class="row g-3">
+    <!-- Informações do Device -->
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-pc-display"></i> Informações do Dispositivo</span>
+                <span class="badge bg-secondary">{{ device.device_type.value }}</span>
+            </div>
+            <div class="card-body">
+                <table class="table table-dark table-sm mb-0">
+                    <tr><th style="width:35%">MAC</th><td><code>{{ device.mac }}</code></td></tr>
+                    <tr><th>Hostname</th><td>{{ device.hostname or '-' }}</td></tr>
+                    <tr><th>Nome Amigável</th><td>{{ device.friendly_name or '-' }}</td></tr>
+                    <tr><th>Vendor</th><td>{{ device.vendor or '-' }}</td></tr>
+                    <tr><th>OS Guess</th><td>{{ device.os_guess or '-' }}</td></tr>
+                    <tr><th>IP Atual</th><td><code>{{ device.current_ip or '-' }}</code></td></tr>
+                    <tr>
+                        <th>Situação</th>
+                        <td>
+                            {% set sit = device.situation or 'NI' %}
+                            {% if sit == 'NI' %}
+                            <span class="badge bg-secondary">NI — Não Identificado</span>
+                            {% elif sit == 'Autorizado' %}
+                            <span class="badge bg-success">{{ sit }}</span>
+                            {% elif sit in ['Suspeito', 'Não Autorizado'] %}
+                            <span class="badge bg-danger">{{ sit }}</span>
+                            {% elif sit == 'Identificado' %}
+                            <span class="badge bg-info text-dark">{{ sit }}</span>
+                            {% else %}
+                            <span class="badge bg-primary">{{ sit }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Tags</th>
+                        <td>
+                            {% if device.tags %}
+                                {% for tag in device.tags.split(',') %}
+                                    {% set tag = tag.strip() %}
+                                    {% if tag == 'inspecionando' %}
+                                    <span class="badge bg-warning text-dark me-1"><i class="bi bi-search"></i> {{ tag }}</span>
+                                    {% elif tag == 'configurando' %}
+                                    <span class="badge bg-info text-dark me-1"><i class="bi bi-tools"></i> {{ tag }}</span>
+                                    {% elif tag == 'atualizando' %}
+                                    <span class="badge bg-primary me-1"><i class="bi bi-arrow-repeat"></i> {{ tag }}</span>
+                                    {% elif tag %}
+                                    <span class="badge bg-secondary me-1">{{ tag }}</span>
+                                    {% endif %}
+                                {% endfor %}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr><th>Primeiro Visto</th><td>{{ device.first_seen_at|localtime }}</td></tr>
+                    <tr><th>Último Visto</th><td>{{ device.last_seen_at|localtime }}</td></tr>
+                    <tr>
+                        <th>Disponibilidade</th>
+                        <td>
+                            {% macro uptime_badge(val, label) %}
+                                {% if val is none %}
+                                <span class="badge bg-secondary me-1">{{ label }}: —</span>
+                                {% elif val >= 0.95 %}
+                                <span class="badge bg-success me-1" title="{{ (val*100)|int }}%">{{ label }}: {{ (val*100)|int }}%</span>
+                                {% elif val >= 0.80 %}
+                                <span class="badge bg-warning text-dark me-1" title="{{ (val*100)|int }}%">{{ label }}: {{ (val*100)|int }}%</span>
+                                {% else %}
+                                <span class="badge bg-danger me-1" title="{{ (val*100)|int }}%">{{ label }}: {{ (val*100)|int }}%</span>
+                                {% endif %}
+                            {% endmacro %}
+                            {{ uptime_badge(uptime_7d, '7d') }}
+                            {{ uptime_badge(uptime_30d, '30d') }}
+                            <span class="text-muted small d-block mt-1">Dias distintos visto online / janela.</span>
+                        </td>
+                    </tr>
+                    {% set online_dates = device.get_online_dates() %}
+                    {% if online_dates %}
+                    <tr>
+                        <th>Dias Online</th>
+                        <td>
+                            <span class="badge bg-info text-dark me-1">{{ online_dates|length }} dia(s) registrado(s)</span>
+                            <button class="btn btn-sm btn-link p-0" type="button"
+                                    data-bs-toggle="collapse" data-bs-target="#onlineDatesList">
+                                ver datas
+                            </button>
+                            <div class="collapse mt-1" id="onlineDatesList">
+                                {% for d in online_dates|sort(reverse=true) %}
+                                <span class="badge bg-secondary me-1 mb-1"><code class="text-light">{{ d }}</code></span>
+                                {% endfor %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endif %}
+                    <tr>
+                        <th>Alertar Down</th>
+                        <td>
+                            {% if device.alert_on_down %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-bell-fill"></i> Sim</span>
+                            {% else %}
+                            <span class="badge bg-secondary"><i class="bi bi-bell-slash"></i> Não</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    <tr><th>Notas</th><td style="white-space:pre-wrap">{{ device.notes or '-' }}</td></tr>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edição -->
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header"><i class="bi bi-pencil"></i> Editar</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('devices.device_edit', device_id=device.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="row g-2">
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Nome Amigável</label>
+                            <input type="text" name="friendly_name" class="form-control form-control-sm"
+                                   value="{{ device.friendly_name or '' }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Hostname</label>
+                            <input type="text" name="hostname" class="form-control form-control-sm"
+                                   value="{{ device.hostname or '' }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Vendor</label>
+                            <input type="text" name="vendor" class="form-control form-control-sm"
+                                   value="{{ device.vendor or '' }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">OS Guess</label>
+                            <input type="text" name="os_guess" class="form-control form-control-sm"
+                                   value="{{ device.os_guess or '' }}">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">MAC
+                                {% if device.mac.startswith('02:00:') %}
+                                <span class="badge bg-warning text-dark ms-1" title="MAC gerado automaticamente pois o dispositivo está em outra sub-rede">placeholder</span>
+                                {% endif %}
+                            </label>
+                            <input type="text" name="mac" class="form-control form-control-sm"
+                                   value="{{ device.mac }}" placeholder="AA:BB:CC:DD:EE:FF">
+                        </div>
+                        <div class="col-md-6 mb-2">
+                            <label class="form-label">Tipo</label>
+                            <select name="device_type" class="form-select form-select-sm">
+                                {% for dt in device_types %}
+                                <option value="{{ dt.value }}" {% if device.device_type == dt %}selected{% endif %}>{{ dt.value }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        <label class="form-label">Situação</label>
+                        <input type="text" name="situation" class="form-control form-control-sm"
+                               value="{{ device.situation or 'NI' }}"
+                               list="situation-options" placeholder="NI">
+                        <datalist id="situation-options">
+                            <option value="NI">
+                            <option value="Identificado">
+                            <option value="Autorizado">
+                            <option value="Não Autorizado">
+                            <option value="Suspeito">
+                            <option value="Monitorado">
+                            <option value="Desativado">
+                        </datalist>
+                        <div class="form-text text-muted">NI = Não Identificado (padrão)</div>
+                    </div>
+                    <div class="col-md-6 mb-2">
+                        <label class="form-label">Tags</label>
+                        <input type="text" name="tags" class="form-control form-control-sm"
+                               value="{{ device.tags or '' }}"
+                               placeholder="inspecionando, configurando, atualizando...">
+                        <div class="form-text text-muted">Separadas por vírgula. Tags especiais: <code>inspecionando</code>, <code>configurando</code>, <code>atualizando</code></div>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Notas</label>
+                        <textarea name="notes" class="form-control form-control-sm" rows="2">{{ device.notes or '' }}</textarea>
+                    </div>
+                    <div class="mb-2">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="alert_on_down" id="alertOnDown"
+                                   {% if device.alert_on_down %}checked{% endif %}>
+                            <label class="form-check-label" for="alertOnDown">
+                                <i class="bi bi-bell-fill"></i> Alertar quando ficar offline
+                            </label>
+                        </div>
+                        <div class="form-text text-muted">Ativa alertas HOST_DOWN para este dispositivo. Recomendado para servidores, câmeras e ativos críticos.</div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center">
+                        <button type="submit" class="btn btn-sm btn-primary">
+                            <i class="bi bi-check"></i> Salvar
+                        </button>
+                    </div>
+                </form>
+                <hr class="border-secondary my-3">
+                <form method="POST" action="{{ url_for('devices.device_delete', device_id=device.id) }}"
+                      onsubmit="return confirm('Excluir o dispositivo \'{{ device.display_name }}\'?\n\nTodos os dados (IPs, portas, vulnerabilidades, alertas) serão removidos permanentemente.')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                        <i class="bi bi-trash"></i> Excluir Dispositivo
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Scan sob demanda -->
+        <div class="card bg-dark border-secondary mt-3">
+            <div class="card-header"><i class="bi bi-radar"></i> Scan sob Demanda</div>
+            <div class="card-body">
+                <p class="text-muted small">Execute scans manualmente neste dispositivo.</p>
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    <button class="btn btn-sm btn-outline-success scan-btn" data-scan="ping">
+                        <i class="bi bi-wifi"></i> Ping
+                    </button>
+                    <button class="btn btn-sm btn-outline-info scan-btn" data-scan="ports">
+                        <i class="bi bi-door-open"></i> Portas
+                    </button>
+                    <button class="btn btn-sm btn-outline-warning scan-btn" data-scan="os_detect">
+                        <i class="bi bi-cpu"></i> OS Detect
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger scan-btn" data-scan="vuln">
+                        <i class="bi bi-shield-exclamation"></i> Vulnerabilidades
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary scan-btn" data-scan="snmp">
+                        <i class="bi bi-info-circle"></i> SNMP
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary scan-btn" data-scan="mobile" title="Identifica smartphones via portas iOS/Android, SSDP/UPnP e mDNS">
+                        <i class="bi bi-phone"></i> Mobile ID
+                    </button>
+                    <button class="btn btn-sm btn-primary" id="scanAllBtn">
+                        <i class="bi bi-play-fill"></i> Todos
+                    </button>
+                </div>
+                <div id="scanResults" class="d-none">
+                    <h6>Resultado:</h6>
+                    <pre id="scanOutput" class="bg-black text-light p-2 rounded small" style="max-height:300px; overflow:auto;"></pre>
+                </div>
+                <div id="scanSpinner" class="d-none text-center">
+                    <div class="spinner-border spinner-border-sm text-info" role="status"></div>
+                    <span class="text-muted ms-2" id="scanSpinnerText">Executando scan...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Histórico de IPs + Portas -->
+<div class="row g-3 mt-2">
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header"><i class="bi bi-hdd-network"></i> Histórico de IPs</div>
+            <div class="card-body">
+                <table class="table table-dark table-sm table-striped">
+                    <thead><tr><th>IP</th><th>Atual</th><th>Primeiro Visto</th><th>Último Visto</th></tr></thead>
+                    <tbody>
+                        {% for dip in ips %}
+                        <tr>
+                            <td><code>{{ dip.ip }}</code></td>
+                            <td>{% if dip.is_current %}<span class="badge bg-success">Sim</span>{% else %}<span class="badge bg-secondary">Não</span>{% endif %}</td>
+                            <td>{{ dip.first_seen_at|localtime }}</td>
+                            <td>{{ dip.last_seen_at|localtime }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="4" class="text-muted text-center">Nenhum IP registrado.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Portas abertas -->
+    <div class="col-md-6">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-door-open"></i> Portas ({{ open_ports|length }})</span>
+                <a href="{{ url_for('devices.port_history', device_id=device.id) }}" class="btn btn-sm btn-outline-secondary py-0">
+                    <i class="bi bi-clock-history"></i> Histórico
+                </a>
+            </div>
+            <div class="card-body">
+                <table class="table table-dark table-sm table-striped">
+                    <thead><tr><th>Proto</th><th>Porta</th><th>Estado</th><th>Serviço</th><th>Versão</th><th>Desde</th></tr></thead>
+                    <tbody>
+                        {% for p in open_ports %}
+                        <tr>
+                            <td>{{ p.protocol }}</td>
+                            <td>
+                                <code class="port-link" data-port="{{ p.port }}" style="cursor:pointer; text-decoration:underline dotted;" title="Clique para ver informações desta porta">{{ p.port }}</code>
+                            </td>
+                            <td>
+                                {% if p.state == 'open' %}
+                                <span class="badge bg-success">open</span>
+                                {% elif p.state == 'filtered' %}
+                                <span class="badge bg-warning text-dark">filtered</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ p.state or 'open' }}</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ p.service_name or '-' }}</td>
+                            <td>{{ p.service_version or '-' }}</td>
+                            <td>{{ p.first_open_at|localtime }}</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="6" class="text-muted text-center">Nenhuma porta encontrada.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if closed_ports %}
+<div class="row g-3 mt-2">
+    <div class="col-12">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header"><i class="bi bi-door-closed"></i> Portas Recentemente Fechadas</div>
+            <div class="card-body">
+                <table class="table table-dark table-sm table-striped">
+                    <thead><tr><th>Proto</th><th>Porta</th><th>Serviço</th><th>Aberta em</th><th>Fechada em</th></tr></thead>
+                    <tbody>
+                        {% for p in closed_ports %}
+                        <tr>
+                            <td>{{ p.protocol }}</td>
+                            <td>
+                                <code class="port-link" data-port="{{ p.port }}" style="cursor:pointer; text-decoration:underline dotted;" title="Clique para ver informações desta porta">{{ p.port }}</code>
+                            </td>
+                            <td>{{ p.service_name or '-' }}</td>
+                            <td>{{ p.first_open_at|localtime }}</td>
+                            <td>{{ p.last_seen_closed_at|localtime }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Modal de informações de porta -->
+<div class="modal fade" id="portInfoModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content bg-dark text-light border-secondary">
+            <div class="modal-header border-secondary py-2" id="portInfoModalHeader">
+                <h5 class="modal-title" id="portInfoModalTitle">
+                    <span class="spinner-border spinner-border-sm text-info me-2" role="status"></span>
+                    Carregando...
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="portInfoModalBody">
+                <div class="text-center text-muted py-4">
+                    <div class="spinner-border text-info" role="status"></div>
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-2" id="portInfoModalFooter">
+                <a href="#" class="btn btn-sm btn-outline-info" id="portInfoFullLink" target="_blank">
+                    <i class="bi bi-box-arrow-up-right"></i> Ver catálogo completo
+                </a>
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Vulnerabilidades -->
+<div class="row g-3 mt-2">
+    <div class="col-12">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>
+                    <i class="bi bi-shield-exclamation"></i> Vulnerabilidades
+                    {% set vuln_count = vulns|selectattr('is_vulnerable')|list|length %}
+                    {% if vuln_count > 0 %}
+                    <span class="badge bg-danger ms-1">{{ vuln_count }}</span>
+                    {% endif %}
+                </span>
+                <div class="d-flex gap-2 align-items-center">
+                    <span class="text-muted small">Total de scripts: {{ vulns|length }}</span>
+                    {% if vulns %}
+                    <div class="dropdown">
+                        <button class="btn btn-sm btn-outline-secondary py-0 dropdown-toggle" data-bs-toggle="dropdown">
+                            <i class="bi bi-download"></i>
+                        </button>
+                        <ul class="dropdown-menu dropdown-menu-dark dropdown-menu-end">
+                            <li><a class="dropdown-item" href="{{ url_for('export.export_vulns', device_id=device.id, format='csv') }}"><i class="bi bi-filetype-csv"></i> CSV</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('export.export_vulns', device_id=device.id, format='json') }}"><i class="bi bi-filetype-json"></i> JSON</a></li>
+                        </ul>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="card-body">
+                {% if vulns %}
+                <table class="table table-dark table-sm table-striped">
+                    <thead>
+                        <tr>
+                            <th>Status</th>
+                            <th>Porta</th>
+                            <th>Serviço</th>
+                            <th>Script</th>
+                            <th>Detalhes</th>
+                            <th>Visto em</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for v in vulns %}
+                        <tr>
+                            <td>
+                                {% if v.is_vulnerable %}
+                                <span class="badge bg-danger">VULNERABLE</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Info</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if v.port > 0 %}
+                                <code>{{ v.protocol }}/{{ v.port }}</code>
+                                {% else %}
+                                <span class="text-muted">host</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ v.service or '-' }}</td>
+                            <td><code>{{ v.script_name }}</code></td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-secondary py-0" type="button"
+                                        data-bs-toggle="collapse" data-bs-target="#vuln-{{ v.id }}">
+                                    Ver
+                                </button>
+                                <div class="collapse mt-1" id="vuln-{{ v.id }}">
+                                    <pre class="bg-black text-light p-2 rounded small mb-0" style="white-space:pre-wrap; max-height:200px; overflow:auto;">{{ v.output }}</pre>
+                                </div>
+                            </td>
+                            <td>{{ v.last_seen_at|localtime }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <p class="text-muted text-center mb-0">Nenhuma vulnerabilidade encontrada. Execute o scan de Vulnerabilidades.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const deviceId = {{ device.id }};
+    const csrfToken = '{{ csrf_token() }}';
+
+    const scanLabels = {
+        ping: 'Ping',
+        ports: 'Portas',
+        os_detect: 'OS Detect',
+        vuln: 'Vulnerabilidades (pode demorar)',
+        snmp: 'SNMP',
+        mobile: 'Mobile ID',
+    };
+
+    function runScan(scanTypes) {
+        const spinner = document.getElementById('scanSpinner');
+        const spinnerText = document.getElementById('scanSpinnerText');
+        const results = document.getElementById('scanResults');
+        const output = document.getElementById('scanOutput');
+
+        // Desabilita todos os botões
+        document.querySelectorAll('.scan-btn, #scanAllBtn').forEach(b => b.disabled = true);
+
+        spinner.classList.remove('d-none');
+        results.classList.add('d-none');
+        const names = scanTypes.map(t => scanLabels[t] || t).join(', ');
+        spinnerText.textContent = `Executando: ${names}...`;
+
+        fetch(`/devices/${deviceId}/scan`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify({ scan_types: scanTypes }),
+        })
+        .then(r => r.json())
+        .then(data => {
+            spinner.classList.add('d-none');
+            results.classList.remove('d-none');
+            output.textContent = formatScanResult(data, scanTypes);
+            document.querySelectorAll('.scan-btn, #scanAllBtn').forEach(b => b.disabled = false);
+            // Recarrega se foi vuln, os_detect, ports ou mobile (atualiza tabelas e campos)
+            if (scanTypes.some(t => ['vuln', 'os_detect', 'ports', 'mobile'].includes(t))) {
+                setTimeout(() => window.location.reload(), 1500);
+            }
+        })
+        .catch(err => {
+            spinner.classList.add('d-none');
+            results.classList.remove('d-none');
+            output.textContent = 'Erro: ' + err.message;
+            document.querySelectorAll('.scan-btn, #scanAllBtn').forEach(b => b.disabled = false);
+        });
+    }
+
+    function formatScanResult(data, scanTypes) {
+        // Ping — exibe resultado legível
+        if (scanTypes.length === 1 && scanTypes[0] === 'ping') {
+            const p = data.ping || {};
+            const status = p.is_up ? 'Online' : 'Offline';
+            const methodMap = { icmp: 'ICMP ping', arp: 'ARP (camada 2)', };
+            const method = p.method
+                ? (methodMap[p.method] || p.method)
+                : '';
+            const icon = p.is_up ? '[OK]' : '[FALHOU]';
+            let out = `${icon} ${status}`;
+            if (method) out += ` — detectado via ${method}`;
+            if (!p.is_up) out += '\nNota: ICMP, ARP e TCP estão bloqueados ou o host está offline.';
+            return out;
+        }
+
+        // Para scan mobile, exibe resultado legível em vez de JSON bruto
+        if (scanTypes.length === 1 && scanTypes[0] === 'mobile') {
+            const m = data.mobile;
+            if (!m) return JSON.stringify(data, null, 2);
+            const lines = [];
+            lines.push('=== Mobile ID ===');
+            lines.push(`Dispositivo móvel: ${m.is_mobile ? 'Sim' : 'Não'}`);
+            if (m.likely_os)    lines.push(`OS provável:       ${m.likely_os}`);
+            if (m.friendly_name) lines.push(`Nome:              ${m.friendly_name}`);
+            if (m.manufacturer) lines.push(`Fabricante:        ${m.manufacturer}`);
+            if (m.model)        lines.push(`Modelo:            ${m.model}`);
+            if (m.mdns_hostname) lines.push(`Hostname mDNS:     ${m.mdns_hostname}`);
+            if (m.techniques_used?.length)
+                lines.push(`Técnicas usadas:   ${m.techniques_used.join(', ')}`);
+            if (Object.keys(m.open_mobile_ports || {}).length) {
+                lines.push('\nPortas móveis abertas:');
+                for (const [port, info] of Object.entries(m.open_mobile_ports)) {
+                    lines.push(`  ${port}/tcp  ${info.hint || info.service}`);
+                }
+            }
+            if (m.note) lines.push(`\nNota: ${m.note}`);
+            return lines.join('\n');
+        }
+        return JSON.stringify(data, null, 2);
+    }
+
+    document.querySelectorAll('.scan-btn').forEach(btn => {
+        btn.addEventListener('click', () => runScan([btn.dataset.scan]));
+    });
+
+    document.getElementById('scanAllBtn').addEventListener('click', () => {
+        runScan(['ping', 'ports', 'os_detect', 'vuln', 'snmp', 'mobile']);
+    });
+
+    // ── Clique em números de porta ──────────────────────────────────────
+    const portModal = new bootstrap.Modal(document.getElementById('portInfoModal'));
+    const modalTitle = document.getElementById('portInfoModalTitle');
+    const modalBody  = document.getElementById('portInfoModalBody');
+    const modalLink  = document.getElementById('portInfoFullLink');
+
+    const riskColors = { 'CRÍTICO': 'danger', 'ALTO': 'warning', 'MÉDIO': 'info', 'BAIXO': 'success' };
+    const riskLabels = { 'CRÍTICO': 'danger', 'ALTO': 'warning', 'MÉDIO': 'info', 'BAIXO': 'success' };
+
+    function renderPortModal(data, port) {
+        const rc = riskColors[data.risk] || 'secondary';
+        const encIcon = data.has_encryption
+            ? '<i class="bi bi-lock-fill text-success ms-2" title="Criptografado nativamente"></i>'
+            : '<i class="bi bi-unlock text-danger ms-2" title="Texto claro"></i>';
+
+        modalTitle.innerHTML =
+            `<span class="badge bg-${rc} me-2">${data.risk}</span>` +
+            `<strong>${data.port}/${data.protocol}</strong> &mdash; ${data.service}${encIcon}`;
+
+        let html = '';
+
+        // Identificação
+        html += `<div class="row g-2 small mb-3">`;
+        html += `<div class="col-6"><span class="text-muted">Status IANA:</span> `;
+        const ianaC = data.iana_status === 'Registrada' ? 'success' : (data.iana_status === 'Não Oficial' ? 'warning text-dark' : 'secondary');
+        html += `<span class="badge bg-${ianaC}">${data.iana_status}</span></div>`;
+        html += `<div class="col-6"><span class="text-muted">Criptografia:</span> ${data.has_encryption
+            ? '<span class="text-success"><i class="bi bi-lock-fill"></i> Nativa</span>'
+            : '<span class="text-danger"><i class="bi bi-unlock"></i> Texto claro</span>'}</div>`;
+        if (data.cves) {
+            html += `<div class="col-12"><span class="text-muted">CVEs:</span> <code class="text-warning small">${data.cves}</code></div>`;
+        }
+        html += `</div>`;
+
+        // Tags
+        if (data.tags && data.tags.length) {
+            html += `<div class="mb-3">`;
+            data.tags.forEach(t => {
+                html += `<span class="badge bg-dark border border-secondary text-light me-1">${t}</span>`;
+            });
+            html += `</div>`;
+        }
+
+        // Descrição
+        html += `<div class="card bg-dark border-secondary mb-2">
+            <div class="card-header py-1 border-secondary"><small class="text-uppercase text-muted fw-bold"><i class="bi bi-card-text me-1"></i>Descrição e Contexto</small></div>
+            <div class="card-body py-2 small">${data.uses}</div>
+        </div>`;
+
+        // Riscos
+        html += `<div class="card bg-dark border-${rc} mb-2">
+            <div class="card-header py-1 border-${rc}"><small class="text-uppercase fw-bold text-${rc}"><i class="bi bi-shield-exclamation me-1"></i>Riscos e Vetores</small></div>
+            <div class="card-body py-2 small">${data.risks}</div>
+        </div>`;
+
+        // Quando normal / alerta
+        html += `<div class="row g-2 mb-0">
+            <div class="col-md-6">
+                <div class="card bg-dark border-success h-100">
+                    <div class="card-header py-1 border-success"><small class="text-uppercase fw-bold text-success"><i class="bi bi-check-circle me-1"></i>Quando é Normal</small></div>
+                    <div class="card-body py-2 small">${data.when_ok}</div>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card bg-dark border-danger h-100">
+                    <div class="card-header py-1 border-danger"><small class="text-uppercase fw-bold text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Indícios de Risco</small></div>
+                    <div class="card-body py-2 small">${data.when_alert}</div>
+                </div>
+            </div>
+        </div>`;
+
+        modalBody.innerHTML = html;
+    }
+
+    function renderPortNotFound(port) {
+        modalTitle.innerHTML = `<i class="bi bi-question-circle me-2 text-muted"></i>Porta <strong>${port}</strong> — sem informações no catálogo`;
+        modalBody.innerHTML = `<p class="text-muted text-center py-3">Esta porta não está registrada no catálogo de referência.<br>
+            <a href="/portas?q=${port}" target="_blank" class="btn btn-sm btn-outline-info mt-2">
+                <i class="bi bi-search"></i> Pesquisar no catálogo
+            </a></p>`;
+    }
+
+    document.querySelectorAll('.port-link').forEach(function(el) {
+        el.addEventListener('click', function() {
+            const port = this.dataset.port;
+
+            // Reseta modal para estado de carregamento
+            modalTitle.innerHTML = '<span class="spinner-border spinner-border-sm text-info me-2" role="status"></span>Carregando porta ' + port + '...';
+            modalBody.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border text-info" role="status"></div></div>';
+            modalLink.href = '/portas?q=' + port;
+
+            portModal.show();
+
+            fetch('/portas/info/' + port)
+                .then(function(r) {
+                    if (r.status === 404) return null;
+                    return r.json();
+                })
+                .then(function(data) {
+                    if (!data) {
+                        renderPortNotFound(port);
+                    } else {
+                        renderPortModal(data, port);
+                    }
+                })
+                .catch(function() {
+                    renderPortNotFound(port);
+                });
+        });
+    });
+});
+</script>
+{% endblock %}

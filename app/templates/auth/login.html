@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Login - NetMonitor{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center mt-5">
+    <div class="col-md-4">
+        <div class="card bg-dark border-secondary">
+            <div class="card-body">
+                <h3 class="card-title text-center mb-4">
+                    <i class="bi bi-router"></i> NetMonitor
+                </h3>
+                <form method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Usuário</label>
+                        <input type="text" class="form-control" id="username" name="username"
+                               required autofocus autocomplete="username">
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Senha</label>
+                        <input type="password" class="form-control" id="password" name="password"
+                               required autocomplete="current-password">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="bi bi-box-arrow-in-right"></i> Entrar
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

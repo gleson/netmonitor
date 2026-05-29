@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Faixas de IP - {{ profile.name }} - NetMonitor{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{{ url_for('admin.profiles') }}">Perfis</a></li>
+        <li class="breadcrumb-item active">{{ profile.name }} &mdash; Faixas de IP</li>
+    </ol>
+</nav>
+
+<div class="row g-3">
+    <!-- Lista de faixas -->
+    <div class="col-md-8">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header">
+                <i class="bi bi-hdd-network"></i> Faixas de IP
+            </div>
+            <div class="card-body">
+                <table class="table table-dark table-striped table-sm">
+                    <thead>
+                        <tr><th>CIDR</th><th>Descrição</th><th>Portas</th><th>Habilitada</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        {% for r in ip_ranges %}
+                        <tr>
+                            <td><code>{{ r.cidr }}</code></td>
+                            <td>{{ r.description or '-' }}</td>
+                            <td>
+                                {% if r.scan_all_ports %}
+                                <span class="badge bg-danger">Todas</span>
+                                {% elif r.custom_ports %}
+                                <span class="badge bg-info text-dark" title="{{ r.custom_ports }}">Personalizado</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Padrão</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if r.enabled %}<span class="badge bg-success">Sim</span>
+                                {% else %}<span class="badge bg-secondary">Não</span>{% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('admin.range_edit', range_id=r.id) }}" class="btn btn-sm btn-outline-warning" title="Editar">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <form method="POST" action="{{ url_for('admin.range_toggle', range_id=r.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-info" title="Toggle">
+                                        <i class="bi bi-toggle-{% if r.enabled %}on{% else %}off{% endif %}"></i>
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('admin.range_delete', range_id=r.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger" onclick="return confirm('Remover esta faixa?')">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="5" class="text-muted text-center">Nenhuma faixa cadastrada.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Formulário para adicionar faixa -->
+    <div class="col-md-4">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header"><i class="bi bi-plus"></i> Nova Faixa</div>
+            <div class="card-body">
+                <form method="POST" action="{{ url_for('admin.range_new', profile_id=profile.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="mb-3">
+                        <label class="form-label">CIDR *</label>
+                        <input type="text" name="cidr" class="form-control form-control-sm" required
+                               placeholder="192.168.1.0/24">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Descrição</label>
+                        <input type="text" name="description" class="form-control form-control-sm"
+                               placeholder="Rede principal">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Portas para Port Scan</label>
+                        <div class="form-check">
+                            <input type="radio" name="port_mode" value="default" class="form-check-input" id="portDefault" checked>
+                            <label class="form-check-label" for="portDefault">Padrão (portas comuns)</label>
+                        </div>
+                        <div class="form-check">
+                            <input type="radio" name="port_mode" value="all" class="form-check-input" id="portAll">
+                            <label class="form-check-label" for="portAll">Todas (1-65535) <small class="text-warning">- lento</small></label>
+                        </div>
+                        <div class="form-check">
+                            <input type="radio" name="port_mode" value="custom" class="form-check-input" id="portCustom">
+                            <label class="form-check-label" for="portCustom">Personalizado</label>
+                        </div>
+                        <input type="text" name="custom_ports" class="form-control form-control-sm mt-2" id="customPortsInput"
+                               placeholder="Ex: 22,80,443,8080 ou 1-1024" disabled>
+                        <small class="text-muted">Separar por vírgula ou usar ranges (ex: 1-1024,8080,8443)</small>
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input type="checkbox" name="enabled" class="form-check-input" id="rangeEnabled" checked>
+                        <label class="form-check-label" for="rangeEnabled">Habilitada</label>
+                        <input type="hidden" name="enabled_field" value="1">
+                    </div>
+                    <button type="submit" class="btn btn-sm btn-primary w-100">
+                        <i class="bi bi-plus"></i> Adicionar Faixa
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const radios = document.querySelectorAll('input[name="port_mode"]');
+    const customInput = document.getElementById('customPortsInput');
+    radios.forEach(r => {
+        r.addEventListener('change', () => {
+            customInput.disabled = r.value !== 'custom' || !r.checked;
+            if (r.value === 'custom' && r.checked) customInput.focus();
+        });
+    });
+});
+</script>
+{% endblock %}

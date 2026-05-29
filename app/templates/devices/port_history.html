@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Histórico de Portas — {{ device.display_name }} - NetMonitor{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h2 class="mb-0"><i class="bi bi-clock-history"></i> Histórico de Portas</h2>
+        <small class="text-muted">{{ device.display_name }} — {{ device.mac }}</small>
+    </div>
+    <a href="{{ url_for('devices.device_detail', device_id=device.id) }}" class="btn btn-sm btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Voltar ao Device
+    </a>
+</div>
+
+<div class="row g-3">
+    <!-- Resumo atual -->
+    <div class="col-md-4">
+        <div class="card bg-dark border-secondary h-100">
+            <div class="card-header"><i class="bi bi-list-check"></i> Estado Atual das Portas</div>
+            <div class="card-body p-0">
+                <table class="table table-dark table-sm table-striped mb-0">
+                    <thead>
+                        <tr>
+                            <th>Porta</th>
+                            <th>Estado</th>
+                            <th>Serviço</th>
+                            <th>Desde</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for p in all_ports %}
+                        <tr>
+                            <td>
+                                <code class="port-link" data-port="{{ p.port }}"
+                                      style="cursor:pointer; text-decoration:underline dotted;">
+                                    {{ p.protocol }}/{{ p.port }}
+                                </code>
+                            </td>
+                            <td>
+                                {% if p.last_seen_closed_at %}
+                                <span class="badge bg-secondary">fechada</span>
+                                {% elif p.state == 'open' %}
+                                <span class="badge bg-success">open</span>
+                                {% elif p.state == 'filtered' %}
+                                <span class="badge bg-warning text-dark">filtered</span>
+                                {% else %}
+                                <span class="badge bg-info text-dark">{{ p.state }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-muted small">{{ p.service_name or '-' }}</td>
+                            <td class="text-muted small">{{ p.first_open_at|localtime_short }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="text-center text-muted">Nenhuma porta registrada.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Timeline de eventos -->
+    <div class="col-md-8">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header">
+                <i class="bi bi-activity"></i> Timeline de Eventos
+                <span class="badge bg-secondary ms-2">{{ events|length }} eventos</span>
+            </div>
+            <div class="card-body">
+                {% if events %}
+                <div class="timeline-container" style="max-height: 70vh; overflow-y: auto;">
+                    {% set ns = namespace(last_date='') %}
+                    {% for ev in events %}
+                    {% set ev_date = ev.at|localtime('%d/%m/%Y') if ev.at else '—' %}
+                    {% if ev_date != ns.last_date %}
+                    {% set ns.last_date = ev_date %}
+                    <div class="text-muted small fw-bold border-bottom border-secondary pb-1 mb-2 mt-3">
+                        <i class="bi bi-calendar3"></i> {{ ev_date }}
+                    </div>
+                    {% endif %}
+
+                    <div class="d-flex gap-3 align-items-start mb-2">
+                        <div class="text-muted small text-nowrap" style="min-width: 50px;">
+                            {{ ev.at|localtime_short if ev.at else '—' }}
+                        </div>
+                        <div>
+                            {% if ev.kind == 'opened' %}
+                            <span class="badge bg-success"><i class="bi bi-door-open"></i> aberta</span>
+                            {% elif ev.kind == 'closed' %}
+                            <span class="badge bg-secondary"><i class="bi bi-door-closed"></i> fechada</span>
+                            {% elif ev.kind == 'state_change' %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-arrow-left-right"></i> estado</span>
+                            {% endif %}
+                        </div>
+                        <div class="small">
+                            {% if ev.port %}
+                            <code class="port-link me-1" data-port="{{ ev.port }}"
+                                  style="cursor:pointer; text-decoration:underline dotted;">
+                                {{ ev.protocol }}/{{ ev.port }}
+                            </code>
+                            {% endif %}
+                            <span class="text-muted">{{ ev.detail }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="text-muted text-center mb-0">
+                    <i class="bi bi-info-circle"></i>
+                    Nenhum evento registrado. Execute um scan de portas para iniciar o histórico.
+                </p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Clique em código de porta → abre página de referência
+document.querySelectorAll('.port-link').forEach(el => {
+    el.addEventListener('click', () => {
+        const port = el.dataset.port;
+        window.open(`/portas/?port=${port}`, '_blank');
+    });
+});
+</script>
+{% endblock %}

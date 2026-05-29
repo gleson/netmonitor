@@ -1,0 +1,450 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - NetMonitor{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2><i class="bi bi-speedometer2"></i> Dashboard</h2>
+    {% if active_profile %}
+    <div class="d-flex align-items-center gap-2">
+        <div class="btn-group" role="group">
+            <button id="btnDiscovery" class="btn btn-sm btn-outline-success" title="Descobrir hosts agora">
+                <i class="bi bi-search"></i> Discovery
+            </button>
+            <button id="btnPortScan" class="btn btn-sm btn-outline-info" title="Escanear portas agora">
+                <i class="bi bi-door-open"></i> Port Scan
+            </button>
+        </div>
+        <span id="scanFeedback" class="ms-2 small d-none"></span>
+    </div>
+    {% endif %}
+</div>
+
+{% set selected_profile = active_profile %}
+{% if selected_profile %}
+<!-- Cards de resumo -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card bg-dark border-info h-100">
+            <div class="card-body text-center">
+                <h6 class="card-subtitle text-muted mb-2">Total de Dispositivos</h6>
+                <h2 class="text-info" id="statTotalDevices">{{ stats.total_devices }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-success h-100">
+            <div class="card-body text-center">
+                <h6 class="card-subtitle text-muted mb-2">Online Agora</h6>
+                <h2 class="text-success" id="statOnlineDevices">{{ stats.online_devices }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-warning h-100">
+            <div class="card-body text-center">
+                <h6 class="card-subtitle text-muted mb-2">Novos (24h)</h6>
+                <h2 class="text-warning" id="statNewDevices">{{ stats.new_devices_24h }}</h2>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-dark border-danger h-100">
+            <div class="card-body text-center">
+                <h6 class="card-subtitle text-muted mb-2">Alertas Abertos</h6>
+                <h2 class="text-danger" id="statOpenAlerts">{{ stats.open_alerts }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Gráficos -->
+<div class="row g-3">
+    <div class="col-md-8">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-graph-up"></i> Histórico de Dispositivos</span>
+                <div class="btn-group btn-group-sm" role="group" id="periodSelector">
+                    <button type="button" class="btn btn-outline-secondary period-btn" data-period="day">Dia</button>
+                    <button type="button" class="btn btn-outline-secondary period-btn" data-period="week">Semana</button>
+                    <button type="button" class="btn btn-outline-secondary active period-btn" data-period="15days">15 Dias</button>
+                    <button type="button" class="btn btn-outline-secondary period-btn" data-period="month">Mês</button>
+                </div>
+            </div>
+            <div class="card-body" style="height: 615px;">
+                <canvas id="devicesTimelineChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header">
+                <i class="bi bi-bell"></i> Alertas por Tipo (7 dias)
+            </div>
+            <div class="card-body">
+                <canvas id="alertsChart" height="250"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Últimos scans -->
+<div class="row g-3 mt-2">
+    <div class="col-12">
+        <div class="card bg-dark border-secondary">
+            <div class="card-header">
+                <i class="bi bi-clock-history"></i> Últimos Scans
+            </div>
+            <div class="card-body">
+                <div id="scanHistory" class="text-muted">Carregando...</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle"></i>
+    Nenhum perfil de rede configurado.
+    <a href="{{ url_for('admin.profile_new') }}">Crie um perfil</a> para começar.
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if active_profile %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const profileId = {{ active_profile.id }};
+
+    const csrfToken = '{{ csrf_token() }}';
+
+    // --- Scan imediato ---
+    function triggerScan(scanType) {
+        const feedback = document.getElementById('scanFeedback');
+        const btnDiscovery = document.getElementById('btnDiscovery');
+        const btnPortScan = document.getElementById('btnPortScan');
+        const btn = scanType === 'discovery' ? btnDiscovery : btnPortScan;
+        const originalHtml = btn.innerHTML;
+
+        // Desabilita o botão e mostra spinner
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Rodando...';
+        feedback.classList.remove('d-none', 'text-success', 'text-danger', 'text-warning');
+
+        fetch('/api/scan/trigger', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+            },
+            body: JSON.stringify({ profile_id: profileId, scan_type: scanType }),
+        })
+        .then(r => r.json().then(data => ({ status: r.status, data })))
+        .then(({ status, data }) => {
+            feedback.classList.remove('d-none');
+            if (status === 200) {
+                feedback.classList.add('text-success');
+                feedback.textContent = data.message;
+                // Aguarda e depois faz polling para atualizar
+                pollScanCompletion(scanType);
+            } else if (status === 409) {
+                feedback.classList.add('text-warning');
+                feedback.textContent = data.message;
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            } else {
+                feedback.classList.add('text-danger');
+                feedback.textContent = data.error || 'Erro ao iniciar scan.';
+                btn.disabled = false;
+                btn.innerHTML = originalHtml;
+            }
+        })
+        .catch(err => {
+            feedback.classList.remove('d-none');
+            feedback.classList.add('text-danger');
+            feedback.textContent = 'Erro de conexão: ' + err.message;
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        });
+    }
+
+    function pollScanCompletion(scanType) {
+        const btn = scanType === 'discovery'
+            ? document.getElementById('btnDiscovery')
+            : document.getElementById('btnPortScan');
+        const originalHtml = scanType === 'discovery'
+            ? '<i class="bi bi-search"></i> Discovery'
+            : '<i class="bi bi-door-open"></i> Port Scan';
+        const feedback = document.getElementById('scanFeedback');
+
+        const interval = setInterval(() => {
+            fetch(`/api/scan/status?profile_id=${profileId}`)
+                .then(r => r.json())
+                .then(data => {
+                    const still = data.running_scans.some(s => s.scan_type === scanType);
+                    if (!still) {
+                        clearInterval(interval);
+                        btn.disabled = false;
+                        btn.innerHTML = originalHtml;
+                        feedback.classList.remove('text-success', 'text-warning');
+                        feedback.classList.add('text-success');
+                        feedback.textContent = `Scan '${scanType}' concluído!`;
+                        // Atualiza os dados do dashboard em tela (sem recarregar).
+                        setTimeout(refreshAll, 1000);
+                    }
+                });
+        }, 3000);
+    }
+
+    document.getElementById('btnDiscovery').addEventListener('click', () => triggerScan('discovery'));
+    document.getElementById('btnPortScan').addEventListener('click', () => triggerScan('ports'));
+
+    // --- Gráfico de histórico de dispositivos ---
+    let devicesChart = null;
+
+    const periodLabels = {
+        day: 'últimas 24h (por hora)',
+        week: 'últimos 7 dias (por hora)',
+        '15days': 'últimos 15 dias (por dia)',
+        month: 'último mês (por dia)',
+    };
+
+    function formatSlot(slot, granularity) {
+        // slot formato: "YYYY-MM-DD HH:00" (hora) ou "YYYY-MM-DD" (dia)
+        if (granularity === 'hour') {
+            const dt = new Date(slot.replace(' ', 'T') + ':00Z');
+            return dt.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone });
+        } else {
+            const [y, m, d] = slot.split('-');
+            return `${d}/${m}`;
+        }
+    }
+
+    function loadDevicesChart(period) {
+        fetch(`/api/metrics/online-timeline?profile_id=${profileId}&period=${period}`)
+            .then(r => r.json())
+            .then(data => {
+                const labels = data.timeline.map(d => formatSlot(d.slot, data.granularity));
+                const onlineData = data.timeline.map(d => d.online_devices);
+                const newData = data.timeline.map(d => d.new_devices);
+
+                const maxTicks = data.granularity === 'hour' ? 12 : data.timeline.length;
+
+                if (devicesChart) {
+                    devicesChart.data.labels = labels;
+                    devicesChart.data.datasets[0].data = onlineData;
+                    devicesChart.data.datasets[1].data = newData;
+                    devicesChart.options.scales.x.ticks.maxTicksLimit = maxTicks;
+                    devicesChart.update();
+                    return;
+                }
+
+                const ctx = document.getElementById('devicesTimelineChart').getContext('2d');
+                devicesChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels,
+                        datasets: [
+                            {
+                                label: 'Online',
+                                data: onlineData,
+                                borderColor: '#198754',
+                                backgroundColor: 'rgba(25, 135, 84, 0.12)',
+                                fill: true,
+                                tension: 0.3,
+                                pointRadius: 2,
+                                pointHoverRadius: 5,
+                                yAxisID: 'y',
+                            },
+                            {
+                                label: 'Novos',
+                                data: newData,
+                                borderColor: '#ffc107',
+                                backgroundColor: 'rgba(255, 193, 7, 0.10)',
+                                fill: true,
+                                tension: 0.3,
+                                pointRadius: 2,
+                                pointHoverRadius: 5,
+                                yAxisID: 'y',
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { labels: { color: '#adb5bd' } },
+                            tooltip: {
+                                callbacks: {
+                                    label: item => ` ${item.dataset.label}: ${item.raw}`,
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                ticks: {
+                                    color: '#adb5bd',
+                                    maxRotation: 45,
+                                    autoSkip: true,
+                                    maxTicksLimit: maxTicks,
+                                },
+                                grid: { color: '#333' }
+                            },
+                            y: {
+                                ticks: { color: '#adb5bd', precision: 0 },
+                                grid: { color: '#333' },
+                                beginAtZero: true,
+                            }
+                        }
+                    }
+                });
+            });
+    }
+
+    // Botões de período — persiste escolha no localStorage
+    const PERIOD_KEY = `devicesChartPeriod_${profileId}`;
+    let currentPeriod = localStorage.getItem(PERIOD_KEY) || '15days';
+
+    // Marca o botão correto como ativo
+    document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.period === currentPeriod);
+    });
+
+    loadDevicesChart(currentPeriod);
+
+    document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            currentPeriod = this.dataset.period;
+            localStorage.setItem(PERIOD_KEY, currentPeriod);
+            loadDevicesChart(currentPeriod);
+        });
+    });
+
+    // Gráfico de alertas
+    let alertsChart = null;
+    const alertColors = ['#0dcaf0', '#ffc107', '#dc3545', '#198754', '#6f42c1', '#fd7e14'];
+
+    function loadAlertsChart() {
+        return fetch(`/api/metrics/alerts-summary?profile_id=${profileId}&days=7`)
+            .then(r => r.json())
+            .then(data => {
+                const labels = Object.keys(data.by_type);
+                const values = Object.values(data.by_type);
+                if (alertsChart) {
+                    alertsChart.data.labels = labels;
+                    alertsChart.data.datasets[0].data = values;
+                    alertsChart.data.datasets[0].backgroundColor = alertColors.slice(0, labels.length);
+                    alertsChart.update();
+                    return;
+                }
+                const ctx = document.getElementById('alertsChart').getContext('2d');
+                alertsChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: labels,
+                        datasets: [{ data: values, backgroundColor: alertColors.slice(0, labels.length) }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: { legend: { labels: { color: '#adb5bd' }, position: 'bottom' } }
+                    }
+                });
+            });
+    }
+    loadAlertsChart();
+
+    // Atualiza os cartões de resumo (Total/Online/Novos/Alertas) sem recarregar.
+    function refreshStats() {
+        return fetch(`/api/metrics/dashboard-stats?profile_id=${profileId}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) return;
+                const set = (id, val) => {
+                    const el = document.getElementById(id);
+                    if (el && el.textContent != val) el.textContent = val;
+                };
+                set('statTotalDevices', data.total_devices);
+                set('statOnlineDevices', data.online_devices);
+                set('statNewDevices', data.new_devices_24h);
+                set('statOpenAlerts', data.open_alerts);
+            })
+            .catch(() => {});
+    }
+
+    // Histórico de scans
+    function loadScanHistory() {
+        return fetch(`/api/metrics/scan-history?profile_id=${profileId}&limit=10`)
+        .then(r => r.json())
+        .then(data => {
+            const container = document.getElementById('scanHistory');
+            if (!data.scans.length) {
+                container.innerHTML = '<em>Nenhum scan realizado ainda.</em>';
+                return;
+            }
+            function formatHost(target_ip) {
+                if (!target_ip) return '<span class="text-muted">Todos</span>';
+                const parts = target_ip.split('.');
+                return '<code>.' + parts.slice(-2).join('.') + '</code>';
+            }
+
+            function formatResult(s) {
+                if (s.scan_type === 'MOBILE_SCAN') return s.result_summary || s.error_message || '-';
+                const n = s.hosts_found;
+                if (!n && n !== 0) return '-';
+                if (s.scan_type === 'HOST_DISCOVERY') return n + ' host' + (n !== 1 ? 's' : '');
+                if (s.scan_type === 'PORT_SCAN') return n + ' porta' + (n !== 1 ? 's' : '');
+                return n;
+            }
+
+            let html = '<table class="table table-sm table-dark table-striped">';
+            html += '<thead><tr><th>Tipo</th><th>Host</th><th>Status</th><th>Início</th><th>Resultado</th><th>Erro</th></tr></thead><tbody>';
+            data.scans.forEach(s => {
+                const statusBadge = s.status === 'SUCCESS'
+                    ? '<span class="badge bg-success">OK</span>'
+                    : s.status === 'ERROR'
+                    ? '<span class="badge bg-danger">ERRO</span>'
+                    : '<span class="badge bg-warning text-dark">Rodando</span>';
+                const typeLabels = {
+                    HOST_DISCOVERY: '<span class="badge bg-success">DISCOVERY</span>',
+                    PORT_SCAN:      '<span class="badge bg-info text-dark">PORT_SCAN</span>',
+                    MOBILE_SCAN:    '<span class="badge bg-primary">MOBILE ID</span>',
+                };
+                const typeBadge = typeLabels[s.scan_type] || `<span class="badge bg-secondary">${s.scan_type}</span>`;
+                const errorCell = s.scan_type === 'MOBILE_SCAN' ? '-' : (s.error_message || '-');
+                html += `<tr>
+                    <td>${typeBadge}</td>
+                    <td>${formatHost(s.target_ip)}</td>
+                    <td>${statusBadge}</td>
+                    <td>${s.started_at ? new Date(s.started_at).toLocaleString('pt-BR') : '-'}</td>
+                    <td>${formatResult(s)}</td>
+                    <td>${errorCell}</td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        });
+    }
+    loadScanHistory();
+
+    // --- Auto-refresh ao vivo (sem F5) ---
+    // Atualiza cartões, gráficos e histórico a cada 30s. Pausa quando a aba
+    // está em segundo plano para não desperdiçar requisições.
+    const REFRESH_MS = 30000;
+    function refreshAll() {
+        if (document.hidden) return;
+        refreshStats();
+        loadScanHistory();
+        loadAlertsChart();
+        loadDevicesChart(currentPeriod);
+    }
+    setInterval(refreshAll, REFRESH_MS);
+    // Atualiza imediatamente ao voltar para a aba.
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshAll();
+    });
+});
+</script>
+{% endif %}
+{% endblock %}
