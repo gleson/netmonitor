@@ -66,6 +66,27 @@ flask db upgrade            # cria/atualiza o schema (funciona em banco novo)
 
 ### Primeiro usuário admin
 
+Num banco novo, o `flask db upgrade` **já cria o admin padrão** automaticamente:
+
+```
+usuário: admin
+senha:   umaSenhaForte123
+```
+
+> ⚠️ **Troque essa senha após o primeiro acesso** — ela é pública (está aqui no
+> repositório). Use **Admin → Usuários** na interface ou
+> `flask seed-admin --password '<novaSenha>'`.
+
+O seed só ocorre quando **não há nenhum usuário** (não sobrescreve deploys
+existentes). Para definir credenciais diferentes já na criação, exporte as
+variáveis antes do upgrade:
+
+```bash
+SEED_ADMIN_USERNAME=meuadmin SEED_ADMIN_PASSWORD='outraSenhaForte123' flask db upgrade
+```
+
+Para criar/promover um admin manualmente a qualquer momento:
+
 ```bash
 flask seed-admin --password 'umaSenhaForte123'   # mín. 10 chars, letra + dígito
 ```
