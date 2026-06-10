@@ -266,6 +266,40 @@ def device_detail(device_id):
     )
 
 
+@devices_bp.route("/<int:device_id>/ports/<int:port_id>/toggle-authorized", methods=["POST"])
+@login_required
+@require_role(ROLE_OPERATOR)
+def port_toggle_authorized(device_id, port_id):
+    """Alterna o baseline (is_authorized) de uma porta do device.
+
+    Portas autorizadas são consideradas esperadas: não geram alerta ao
+    reaparecer nem em mudanças de estado — somente desvios do baseline alertam.
+    """
+    device = db.session.get(Device, device_id) or abort(404)
+    port = db.session.get(Port, port_id)
+    if not port or port.device_id != device.id:
+        abort(404)
+
+    port.is_authorized = not port.is_authorized
+    action = "port.authorize" if port.is_authorized else "port.unauthorize"
+    audit(
+        action,
+        entity_type="Port",
+        entity_id=port.id,
+        details=(
+            f"{device.display_name}: {port.protocol}/{port.port} "
+            f"({'autorizada' if port.is_authorized else 'não autorizada'})"
+        ),
+    )
+    db.session.commit()
+    flash(
+        f"Porta {port.protocol}/{port.port} marcada como "
+        f"{'autorizada (baseline)' if port.is_authorized else 'não autorizada'}.",
+        "success",
+    )
+    return redirect(url_for("devices.device_detail", device_id=device.id))
+
+
 @devices_bp.route("/<int:device_id>/ports/history")
 @login_required
 def port_history(device_id):

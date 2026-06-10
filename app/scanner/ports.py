@@ -29,6 +29,13 @@ DEFAULT_PORTS = (
     "8080,8443,8888,9090,19780"
 )
 
+# Portas UDP de interesse para o scan UDP periódico (requer root).
+# Conjunto pequeno para não sobrecarregar — UDP scan é lento por natureza.
+UDP_SCAN_PORTS = "53,67,69,123,137,161,500,1900,5353"
+
+# Portas onde normalmente há TLS — alvo da verificação de certificados.
+TLS_PORTS: frozenset[int] = frozenset({443, 4443, 8443, 8843, 9443})
+
 
 @dataclass
 class PortInfo:

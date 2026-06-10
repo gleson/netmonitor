@@ -2,7 +2,7 @@
 
 from app.models import (
     User, Profile, Device, DeviceIp, Port, Alert,
-    DeviceType, AlertType, Severity,
+    DeviceType, AlertType, Severity, _utcnow,
 )
 
 
@@ -73,6 +73,27 @@ def test_port_is_open(db, sample_profile):
 
     assert port.is_open is True
     assert device.open_ports_count == 1
+    assert device.truly_open_ports_count == 1
+
+
+def test_device_ports_count_separates_filtered(db, sample_profile):
+    """open_ports_count conta todas as ativas; truly_open_ports_count só as 'open'."""
+    device = Device(profile_id=sample_profile.id, mac="AA:BB:CC:00:11:33")
+    db.session.add(device)
+    db.session.flush()
+
+    db.session.add(Port(device_id=device.id, protocol="tcp", port=22, state="open"))
+    db.session.add(Port(device_id=device.id, protocol="tcp", port=80, state="filtered"))
+    db.session.add(Port(device_id=device.id, protocol="tcp", port=443, state="open|filtered"))
+    # Porta fechada não conta em nenhum dos dois
+    db.session.add(Port(
+        device_id=device.id, protocol="tcp", port=8080, state="open",
+        last_seen_closed_at=_utcnow(),
+    ))
+    db.session.commit()
+
+    assert device.open_ports_count == 3
+    assert device.truly_open_ports_count == 1
 
 
 def test_alert_acknowledged(db, sample_profile):

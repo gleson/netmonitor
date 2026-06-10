@@ -22,6 +22,15 @@ dashboard em tempo real.
   atualizam sozinhos (sem F5); badge de alertas abertos em todas as páginas.
 - **Alertas** com severidade (INFO/WARNING/CRITICAL) e **notificações** externas
   (webhook e e-mail/SMTP), com nível mínimo configurável por perfil.
+- **Correlação de CVEs**: serviços/versões detectados são cruzados com a API do
+  **NVD** (com cache e filtragem por versão CPE para reduzir falsos-positivos);
+  CVEs no catálogo **CISA KEV** (exploração ativa) viram alerta CRITICAL
+  prioritário. Sem tráfego na rede local — só consultas HTTPS externas.
+- **Catálogo de referência de portas** (82 fichas em pt-BR): riscos, quando
+  alertar, análise e comandos comentados (nmap, tcpdump, etc.), incluindo portas
+  de adversários (Metasploit, ADB, Back Orifice), ICS/SCADA e roteadores.
+- **Verificação de certificados TLS** (expiração) e baseline de portas
+  (`is_authorized`) para suprimir reincidência de alertas conhecidos.
 - **RBAC**: `viewer < operator < admin`, com **audit log** de ações sensíveis.
 - **Backup automático** do SQLite (agendado) + comando CLI.
 - **Segurança**: CSP/HSTS via Talisman, CSRF, rate-limit no login, **bloqueio de
@@ -127,7 +136,22 @@ flask run-scan --profile-id 1 --scan-type {discovery|ports}
 flask fix-placeholder-macs                         # re-resolve MACs 02:00:* via ARP
 flask backup-db                                    # backup consistente do SQLite
 flask generate-fernet-key                          # chave p/ cifrar community SNMP
+flask update-kev                                   # atualiza o catálogo CISA KEV (sem LLM)
+flask run-cve-scan                                 # roda a correlação de CVEs sob demanda
 ```
+
+### Atualização de bases sem LLM
+
+As bases técnicas podem ser atualizadas por scripts/cron, **sem depender de um
+modelo de LLM** — útil para quem clona o repositório sem acesso a um:
+
+```bash
+flask update-kev                          # CISA KEV (exploração ativa) — feed público
+python scripts/update_iana_ports.py       # nomes de serviço de portas (registro IANA)
+sudo nmap --script-updatedb               # reindexa scripts NSE (atualizam com o nmap)
+```
+
+Detalhes (o que é/não é automatizável) em [`docs/atualizacao-bases.md`](docs/atualizacao-bases.md).
 
 ## Testes
 
@@ -146,6 +170,9 @@ pytest -x -q --tb=short         # fail-fast
 | `SECRET_KEY` | *(obrigatória em prod)* | Chave de sessão. |
 | `DATABASE_URL` | SQLite local | URI do banco. |
 | `FERNET_KEY` | — | Cifra as communities SNMP (`flask generate-fernet-key`). |
+| `NVD_API_KEY` | — | API key do NVD (opcional): ~10× mais consultas de CVE/30s. |
+| `CVE_LOOKUP_ENABLED` / `CVE_KEV_ENABLED` | `1` / `1` | Liga correlação de CVE / catálogo CISA KEV. |
+| `CVE_MIN_CVSS_ALERT` | `7.0` | CVSS mínimo p/ gerar alerta de CVE (≥9.0 vira CRITICAL). |
 | `LOGIN_MAX_FAILED_ATTEMPTS` | `5` | Falhas antes de bloquear a conta (0 desativa). |
 | `LOGIN_LOCKOUT_MINUTES` | `15` | Janela do bloqueio de login. |
 | `BACKUP_INTERVAL_HOURS` | `24` | Intervalo do backup automático (0 desativa). |
@@ -165,7 +192,7 @@ Ajustes adicionais em `app/config.py` e, em runtime, no painel **Admin → Confi
   inicialização do scheduler (guardado contra reloader/multi-worker).
 - **`app/models.py`** — modelos: `Profile → IpRange → Device → DeviceIp/Port`,
   além de `Alert`, `Scan`, `Vulnerability`, `Note`, `User`, `AuditLog`, `AppSetting`,
-  `DeviceOnlineSnapshot`. Timestamps em **UTC naive**.
+  `CveCache`, `DeviceOnlineSnapshot`. Timestamps em **UTC naive**.
 - **`app/scanner/scheduling.py`** — jobs por perfil (host discovery, port scan,
   quick host-down) + jobs globais (limpeza e backup).
 - **`app/views/`, `app/api/`** — páginas e endpoints JSON (consumidos pelo dashboard).

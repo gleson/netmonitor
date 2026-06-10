@@ -105,6 +105,7 @@ def _device_to_dict(device: Device) -> dict:
         "os_guess": device.os_guess,
         "current_ip": device.current_ip,
         "open_ports_count": device.open_ports_count,
+        "truly_open_ports_count": device.truly_open_ports_count,
         "first_seen_at": to_iso(device.first_seen_at),
         "last_seen_at": to_iso(device.last_seen_at),
     }

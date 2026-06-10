@@ -253,7 +253,17 @@
                     <span class="badge bg-danger">{{ (u*100)|int }}%</span>
                     {% endif %}
                 </td>
-                <td>{{ device.open_ports_count }}</td>
+                <td>
+                    {% set total_ports = device.open_ports_count %}
+                    {% set abertas = device.truly_open_ports_count %}
+                    {% if total_ports > 0 %}
+                    <span title="{{ total_ports }} porta(s) no total: {{ abertas }} aberta(s), {{ total_ports - abertas }} filtrada(s)">
+                        {{ total_ports }}/{% if abertas > 0 %}<span class="text-warning fw-bold">{{ abertas }}</span>{% else %}<span class="text-muted">0</span>{% endif %}
+                    </span>
+                    {% else %}
+                    <span class="text-muted">0</span>
+                    {% endif %}
+                </td>
                 <td class="text-nowrap">
                     <a href="{{ url_for('devices.device_detail', device_id=device.id) }}" class="btn btn-sm btn-outline-info" title="Detalhes">
                         <i class="bi bi-eye"></i>

@@ -231,28 +231,9 @@ def dashboard_stats():
     if not profile_id:
         return jsonify({"error": "profile_id é obrigatório."}), 400
 
-    now = _utcnow()
-    online_minutes = current_app.config.get("HOST_ONLINE_THRESHOLD_MINUTES", 70)
-    threshold = now - timedelta(minutes=online_minutes)
-    yesterday = now - timedelta(hours=24)
+    from app.stats import compute_dashboard_stats
 
-    total_devices = Device.query.filter_by(profile_id=profile_id).count()
-    online_devices = Device.query.filter_by(profile_id=profile_id).filter(
-        Device.last_seen_at >= threshold
-    ).count()
-    new_devices_24h = Device.query.filter_by(profile_id=profile_id).filter(
-        Device.first_seen_at >= yesterday
-    ).count()
-    open_alerts = Alert.query.filter_by(profile_id=profile_id).filter(
-        Alert.acknowledged_at.is_(None)
-    ).count()
-
-    return jsonify({
-        "total_devices": total_devices,
-        "online_devices": online_devices,
-        "new_devices_24h": new_devices_24h,
-        "open_alerts": open_alerts,
-    })
+    return jsonify(compute_dashboard_stats(profile_id))
 
 
 @api_bp.route("/metrics/scan-history")

@@ -4,16 +4,16 @@ import csv
 import io
 import json
 import re
-from datetime import timezone
+from datetime import datetime, timezone
 
 from flask import Blueprint, request, Response, stream_with_context, redirect, url_for, flash
 from flask_login import login_required, current_user
 
-from app.auth_utils import require_role
+from app.auth_utils import require_role, audit
 from app.extensions import db
 from app.models import (
     Device, DeviceIp, Port, Alert, Vulnerability, Profile,
-    DeviceType, AuditLog,
+    DeviceType,
     ROLE_OPERATOR, _utcnow,
 )
 
@@ -30,6 +30,17 @@ def _fmt_dt(dt):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.strftime(_FMT)
+
+
+def _parse_dt(value: str):
+    """Converte o timestamp exportado (_FMT, UTC) de volta para datetime naive UTC."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, _FMT)
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +199,15 @@ def import_devices():
             db.session.add(device)
             db.session.flush()
 
+            # Preserva os timestamps do arquivo exportado. Sem eles, NÃO usar
+            # "agora": o device importado nunca foi visto nesta instalação e
+            # apareceria como Online até o próximo discovery. Atribuído após o
+            # flush porque o default da coluna sobrepõe None no INSERT.
+            imported_first = _parse_dt(row.get("first_seen_at") or row.get("Primeiro Visto") or "")
+            imported_last = _parse_dt(row.get("last_seen_at") or row.get("Último Visto") or "")
+            device.first_seen_at = imported_first or imported_last or _utcnow()
+            device.last_seen_at = imported_last
+
             # IP inicial apenas para devices novos (não sobrescreve dados de scan ao atualizar)
             ip = (row.get("current_ip") or row.get("IP atual") or "").strip()
             if ip:
@@ -206,14 +226,12 @@ def import_devices():
     summary = f"Importação de ativos no perfil '{profile.name}': {created} criados, {updated} atualizados."
     if errors:
         summary += f" {len(errors)} erros."
-    db.session.add(AuditLog(
-        user_id=current_user.id,
-        username_snapshot=current_user.username,
-        action="IMPORT_DEVICES",
-        target_type="Profile",
-        target_id=profile_id,
-        detail=summary,
-    ))
+    audit(
+        "devices.import",
+        entity_type="Profile",
+        entity_id=profile_id,
+        details=summary,
+    )
     db.session.commit()
 
     msg = f"Importação concluída: {created} criado(s), {updated} atualizado(s)."

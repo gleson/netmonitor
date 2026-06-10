@@ -163,6 +163,34 @@ def backup_db(dest, compress):
     click.echo(f"Backup salvo em: {dest_path} ({size_kb} KB)")
 
 
+@app.cli.command("update-kev")
+def update_kev():
+    """Atualiza o catálogo CISA KEV (vulnerabilidades sob exploração ativa).
+
+    Feed público, sem LLM nem API key — ideal para agendar em cron:
+        0 6 * * *  cd /caminho && FLASK_APP=manage.py flask update-kev
+    """
+    from app.scanner.cve import update_kev_catalog
+    with app.app_context():
+        count = update_kev_catalog()
+    if count is None:
+        raise click.ClickException("Falha ao baixar o catálogo CISA KEV (rede?).")
+    click.echo(f"Catálogo CISA KEV atualizado: {count} CVEs.")
+
+
+@app.cli.command("run-cve-scan")
+def run_cve_scan():
+    """Roda a correlação de CVEs sob demanda (mesmo job do scheduler)."""
+    from app.scanner.cve import correlate_cves
+    with app.app_context():
+        stats = correlate_cves()
+    click.echo(
+        f"Correlação CVE: {stats['combos']} combinações, "
+        f"{stats['lookups']} consultas, {stats['vulns_created']} vulnerabilidades, "
+        f"{stats['alerts']} alertas."
+    )
+
+
 @app.cli.command("generate-fernet-key")
 def generate_fernet_key():
     """Gera uma nova chave Fernet para cifrar credenciais SNMP."""

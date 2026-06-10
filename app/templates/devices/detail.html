@@ -295,7 +295,7 @@
             </div>
             <div class="card-body">
                 <table class="table table-dark table-sm table-striped">
-                    <thead><tr><th>Proto</th><th>Porta</th><th>Estado</th><th>Serviço</th><th>Versão</th><th>Desde</th></tr></thead>
+                    <thead><tr><th>Proto</th><th>Porta</th><th>Estado</th><th>Serviço</th><th>Versão</th><th>Desde</th><th title="Porta autorizada (baseline) não gera alertas ao reaparecer">Baseline</th></tr></thead>
                     <tbody>
                         {% for p in open_ports %}
                         <tr>
@@ -315,9 +315,23 @@
                             <td>{{ p.service_name or '-' }}</td>
                             <td>{{ p.service_version or '-' }}</td>
                             <td>{{ p.first_open_at|localtime }}</td>
+                            <td>
+                                <form method="POST" action="{{ url_for('devices.port_toggle_authorized', device_id=device.id, port_id=p.id) }}" class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    {% if p.is_authorized %}
+                                    <button type="submit" class="btn btn-sm btn-success py-0" title="Porta autorizada (baseline) — clique para remover a autorização">
+                                        <i class="bi bi-shield-check"></i>
+                                    </button>
+                                    {% else %}
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary py-0" title="Clique para autorizar esta porta (baseline — suprime alertas de reaparecimento)">
+                                        <i class="bi bi-shield"></i>
+                                    </button>
+                                    {% endif %}
+                                </form>
+                            </td>
                         </tr>
                         {% else %}
-                        <tr><td colspan="6" class="text-muted text-center">Nenhuma porta encontrada.</td></tr>
+                        <tr><td colspan="7" class="text-muted text-center">Nenhuma porta encontrada.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

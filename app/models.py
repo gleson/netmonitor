@@ -82,6 +82,15 @@ class AlertType(enum.Enum):
     SNMP_FAILURE = "SNMP_FAILURE"
     UNAUTHORIZED_DEVICE = "UNAUTHORIZED_DEVICE"
     IP_CONFLICT = "IP_CONFLICT"
+    # Suspeita de ARP spoofing: IP de um device online reivindicado por outro MAC.
+    ARP_SPOOFING = "ARP_SPOOFING"
+    # Device "fantasma": MAC presente na tabela ARP do sistema com IP fora
+    # de todos os ranges configurados.
+    GHOST_DEVICE = "GHOST_DEVICE"
+    # Certificado TLS expirado ou prestes a expirar.
+    TLS_CERT_EXPIRING = "TLS_CERT_EXPIRING"
+    # CVE conhecido correlacionado com serviço/versão detectado em porta aberta.
+    VULNERABILITY = "VULNERABILITY"
 
 
 class Severity(enum.Enum):
@@ -296,7 +305,17 @@ class Device(db.Model):
 
     @property
     def open_ports_count(self):
+        """Total de portas ativas (não fechadas), incluindo abertas e filtradas."""
         return Port.query.filter_by(device_id=self.id).filter(Port.last_seen_closed_at.is_(None)).count()
+
+    @property
+    def truly_open_ports_count(self):
+        """Portas ativas em estado 'open' (exclui 'filtered' e 'open|filtered')."""
+        return (
+            Port.query.filter_by(device_id=self.id)
+            .filter(Port.last_seen_closed_at.is_(None), Port.state == "open")
+            .count()
+        )
 
     @property
     def display_name(self):
@@ -404,6 +423,10 @@ class Port(db.Model):
     first_open_at = db.Column(db.DateTime, default=_utcnow)
     last_seen_open_at = db.Column(db.DateTime, default=_utcnow)
     last_seen_closed_at = db.Column(db.DateTime, nullable=True)
+    # Baseline: porta marcada como esperada/autorizada pelo operador.
+    # Portas autorizadas não geram alerta ao reaparecer ou mudar de estado —
+    # somente desvios do baseline alertam.
+    is_authorized = db.Column(db.Boolean, default=False, nullable=False)
 
     @property
     def is_open(self) -> bool:
@@ -557,6 +580,40 @@ class AuditLog(db.Model):
 
     def __repr__(self):
         return f"<AuditLog {self.action} user={self.username} at={self.created_at}>"
+
+
+# ---------------------------------------------------------------------------
+# CveCache — cache de consultas CVE por (produto, versão)
+# ---------------------------------------------------------------------------
+
+class CveCache(db.Model):
+    """Cache local de consultas à API de CVE (NVD).
+
+    Evita re-consultar a mesma combinação produto+versão a cada execução do
+    job de correlação (a API do NVD é lenta e tem rate-limit). Entradas mais
+    antigas que CVE_CACHE_TTL_DAYS são re-consultadas.
+    """
+    __tablename__ = "cve_cache"
+    __table_args__ = (
+        db.UniqueConstraint("product", "version", name="uq_cve_product_version"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    product = db.Column(db.String(120), nullable=False)
+    version = db.Column(db.String(120), nullable=False)
+    fetched_at = db.Column(db.DateTime, default=_utcnow, nullable=False)
+    # JSON: lista de {"id": "CVE-...", "cvss": float|None, "summary": str}
+    payload = db.Column(db.Text, default="[]", nullable=False)
+
+    def get_cves(self) -> list[dict]:
+        try:
+            data = json.loads(self.payload or "[]")
+            return data if isinstance(data, list) else []
+        except (ValueError, TypeError):
+            return []
+
+    def __repr__(self):
+        return f"<CveCache {self.product} {self.version}>"
 
 
 # ---------------------------------------------------------------------------

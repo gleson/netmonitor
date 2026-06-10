@@ -53,6 +53,24 @@ def _utcnow():
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _has_root() -> bool:
+    """True quando o processo roda como root (necessário para -sS/-sU/-O)."""
+    import os
+    try:
+        return os.geteuid() == 0
+    except AttributeError:  # plataformas sem geteuid
+        return False
+
+
+def _remove_job_quiet(job_id: str) -> None:
+    """Remove um job do scheduler ignorando inexistência (job desabilitado)."""
+    from app.extensions import scheduler
+    try:
+        scheduler.remove_job(job_id)
+    except Exception:
+        pass
+
+
 def register_jobs_for_all_profiles(app: Flask):
     """Registra os jobs de scan para todos os perfis ativos.
 
@@ -131,6 +149,43 @@ def _register_profile_jobs(app: Flask, profile):
         next_run_time=_preserve_or_default(host_down_job_id, 120),
     )
 
+    # Check rápido de portas críticas — só CRITICAL_PORTS nos devices online.
+    # Detecta exposição grave (Telnet/SMB/RDP...) em horas em vez de até 24h.
+    critical_job_id = f"critical_ports_profile_{profile.id}"
+    critical_interval = int(app.config.get("CRITICAL_PORTS_CHECK_INTERVAL_MINUTES", 120))
+    if critical_interval > 0:
+        scheduler.add_job(
+            func=_run_with_context,
+            args=[app, critical_ports_check, profile.id],
+            trigger="interval",
+            minutes=critical_interval,
+            id=critical_job_id,
+            name=f"Critical Ports Check - {profile.name}",
+            replace_existing=True,
+            max_instances=1,
+            next_run_time=_preserve_or_default(critical_job_id, 300),
+        )
+    else:
+        _remove_job_quiet(critical_job_id)
+
+    # Scan UDP periódico (requer root — -sU usa raw sockets).
+    udp_job_id = f"udp_scan_profile_{profile.id}"
+    udp_hours = int(app.config.get("UDP_SCAN_INTERVAL_HOURS", 168))
+    if udp_hours > 0 and _has_root():
+        scheduler.add_job(
+            func=_run_with_context,
+            args=[app, run_udp_scan, profile.id],
+            trigger="interval",
+            hours=udp_hours,
+            id=udp_job_id,
+            name=f"UDP Scan - {profile.name}",
+            replace_existing=True,
+            max_instances=1,
+            next_run_time=_preserve_or_default(udp_job_id, 600),
+        )
+    else:
+        _remove_job_quiet(udp_job_id)
+
     logger.info(
         "Jobs registrados para profile '%s': discovery=%dmin, portscan=%dmin, quick_host_down=%dmin",
         profile.name, profile.host_discovery_interval_minutes,
@@ -202,6 +257,8 @@ def remove_profile_jobs(profile_id: int) -> None:
         f"discovery_profile_{profile_id}",
         f"portscan_profile_{profile_id}",
         f"host_down_profile_{profile_id}",
+        f"critical_ports_profile_{profile_id}",
+        f"udp_scan_profile_{profile_id}",
     ]
     for job_id in job_ids:
         try:
@@ -256,6 +313,44 @@ def register_global_jobs(app: Flask):
         except Exception:
             pass
         logger.info("Backup automático desabilitado (BACKUP_INTERVAL_HOURS=0 ou DB não-SQLite).")
+
+    # Verificação de certificados TLS em portas HTTPS abertas.
+    tls_hours = int(app.config.get("TLS_CHECK_INTERVAL_HOURS", 24))
+    if tls_hours > 0:
+        scheduler.add_job(
+            func=_run_with_context,
+            args=[app, check_tls_certificates],
+            trigger="interval",
+            hours=tls_hours,
+            id="global_tls_check",
+            name="TLS Certificate Check",
+            replace_existing=True,
+            max_instances=1,
+            next_run_time=_utcnow() + timedelta(minutes=15),
+        )
+        logger.info("Job global de verificação TLS registrado (a cada %dh).", tls_hours)
+    else:
+        _remove_job_quiet("global_tls_check")
+
+    # Correlação CVE (NVD) — sem tráfego na rede local, só HTTPS externo.
+    cve_hours = int(app.config.get("CVE_LOOKUP_INTERVAL_HOURS", 24))
+    if app.config.get("CVE_LOOKUP_ENABLED", True) and cve_hours > 0:
+        from app.scanner.cve import correlate_cves
+        scheduler.add_job(
+            func=_run_with_context,
+            args=[app, correlate_cves],
+            trigger="interval",
+            hours=cve_hours,
+            id="global_cve_correlation",
+            name="CVE Correlation",
+            replace_existing=True,
+            max_instances=1,
+            next_run_time=_utcnow() + timedelta(minutes=20),
+        )
+        logger.info("Job global de correlação CVE registrado (a cada %dh).", cve_hours)
+    else:
+        _remove_job_quiet("global_cve_correlation")
+        logger.info("Correlação CVE desabilitada.")
 
 
 def _run_with_context(app: Flask, func, *args, **kwargs):
@@ -435,28 +530,56 @@ def run_host_discovery(profile_id: int):
                 if conflict_dip:
                     conflict_dev = db.session.get(Device, conflict_dip.device_id)
                     conflict_mac = conflict_dev.mac if conflict_dev else "?"
+
+                    # Suspeita de ARP spoofing: o dono anterior do IP foi visto
+                    # online há pouco — improvável reuso DHCP; provável outro
+                    # host respondendo ARP por um IP que não é dele.
+                    from flask import current_app
+                    online_minutes = current_app.config.get("HOST_ONLINE_THRESHOLD_MINUTES", 70)
+                    spoof_suspect = bool(
+                        conflict_dev
+                        and conflict_dev.last_seen_at
+                        and conflict_dev.last_seen_at >= now - timedelta(minutes=online_minutes)
+                    )
+                    conflict_type = AlertType.ARP_SPOOFING if spoof_suspect else AlertType.IP_CONFLICT
+
                     already_open = Alert.query.filter_by(
                         profile_id=profile.id,
-                        alert_type=AlertType.IP_CONFLICT,
+                        alert_type=conflict_type,
                     ).filter(
                         Alert.message.contains(host.ip),
                         Alert.acknowledged_at.is_(None),
                     ).first()
                     if not already_open:
-                        ip_alert = Alert(
-                            profile_id=profile.id,
-                            device_id=device.id,
-                            alert_type=AlertType.IP_CONFLICT,
-                            severity=Severity.WARNING,
-                            message=(
-                                f"Conflito de IP: {host.ip} reivindicado por "
-                                f"{mac} e {conflict_mac} simultaneamente"
-                            ),
-                        )
+                        if spoof_suspect:
+                            ip_alert = Alert(
+                                profile_id=profile.id,
+                                device_id=device.id,
+                                alert_type=AlertType.ARP_SPOOFING,
+                                severity=Severity.CRITICAL,
+                                is_priority=True,
+                                message=(
+                                    f"Possível ARP spoofing: {host.ip} respondido por {mac} "
+                                    f"enquanto o dono recente {conflict_mac} "
+                                    f"({conflict_dev.display_name}) ainda estava online"
+                                ),
+                            )
+                        else:
+                            ip_alert = Alert(
+                                profile_id=profile.id,
+                                device_id=device.id,
+                                alert_type=AlertType.IP_CONFLICT,
+                                severity=Severity.WARNING,
+                                message=(
+                                    f"Conflito de IP: {host.ip} reivindicado por "
+                                    f"{mac} e {conflict_mac} simultaneamente"
+                                ),
+                            )
                         db.session.add(ip_alert)
                         _maybe_notify(ip_alert, profile, device)
                         logger.warning(
-                            "Conflito de IP %s entre %s e %s", host.ip, mac, conflict_mac
+                            "Conflito de IP %s entre %s e %s (spoofing=%s)",
+                            host.ip, mac, conflict_mac, spoof_suspect,
                         )
 
                 # Gerencia DeviceIp
@@ -522,12 +645,118 @@ def run_host_discovery(profile_id: int):
         db.session.add(snapshot)
         db.session.commit()
 
+        # Dispositivos "fantasma": MACs na tabela ARP do sistema com IP fora
+        # de todos os ranges configurados (custo zero — só leitura do kernel).
+        try:
+            _check_ghost_devices(profile)
+        except Exception:
+            logger.exception("Erro na detecção de devices fantasma (profile %d)", profile_id)
+
     except Exception as e:
         scan.status = ScanStatus.ERROR
         scan.finished_at = _utcnow()
         scan.error_message = str(e)
         db.session.commit()
         logger.exception("Erro no host discovery para profile %d", profile_id)
+
+
+# ---------------------------------------------------------------------------
+# Dispositivos "fantasma" — ARP cache fora dos ranges configurados
+# ---------------------------------------------------------------------------
+
+def _read_system_arp_table() -> list[tuple[str, str]]:
+    """Lê /proc/net/arp e retorna [(ip, mac)] com MACs válidos.
+
+    Retorna lista vazia quando indisponível (ex.: não-Linux).
+    """
+    entries: list[tuple[str, str]] = []
+    try:
+        with open("/proc/net/arp", encoding="utf-8") as f:
+            next(f, None)  # cabeçalho
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 4:
+                    ip, mac = parts[0], parts[3].upper()
+                    if mac and mac != "00:00:00:00:00:00":
+                        entries.append((ip, mac))
+    except OSError:
+        pass
+    return entries
+
+
+def _find_ghost_entries(
+    arp_entries: list[tuple[str, str]], cidrs: list[str],
+) -> list[tuple[str, str]]:
+    """Filtra entradas ARP cujo IP não pertence a nenhum CIDR configurado.
+
+    Ignora loopback, multicast e link-local (169.254.x — ruído de autoconfig).
+    """
+    nets = []
+    for c in cidrs:
+        try:
+            nets.append(ipaddress.ip_network(c, strict=False))
+        except ValueError:
+            continue
+
+    ghosts: list[tuple[str, str]] = []
+    for ip, mac in arp_entries:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if addr.is_loopback or addr.is_multicast or addr.is_link_local:
+            continue
+        if not any(addr in n for n in nets):
+            ghosts.append((ip, mac))
+    return ghosts
+
+
+def _check_ghost_devices(profile) -> int:
+    """Alerta GHOST_DEVICE para MACs no ARP do sistema fora de QUALQUER range.
+
+    Compara contra os ranges habilitados de todos os perfis (não só o atual)
+    para não acusar devices de outro perfil como fantasmas. Dedupe por alerta
+    aberto contendo o mesmo MAC.
+
+    Returns: número de alertas emitidos.
+    """
+    from app.models import Alert, AlertType, IpRange, Severity
+
+    from app.extensions import db
+
+    all_cidrs = [r.cidr for r in IpRange.query.filter_by(enabled=True).all()]
+    if not all_cidrs:
+        return 0
+
+    ghosts = _find_ghost_entries(_read_system_arp_table(), all_cidrs)
+    emitted = 0
+    for ip, mac in ghosts:
+        already_open = Alert.query.filter_by(
+            profile_id=profile.id,
+            alert_type=AlertType.GHOST_DEVICE,
+        ).filter(
+            Alert.message.contains(mac),
+            Alert.acknowledged_at.is_(None),
+        ).first()
+        if already_open:
+            continue
+        ghost_alert = Alert(
+            profile_id=profile.id,
+            alert_type=AlertType.GHOST_DEVICE,
+            severity=Severity.WARNING,
+            message=(
+                f"Dispositivo fantasma: {mac} visto na tabela ARP com IP {ip}, "
+                f"fora de todos os ranges configurados"
+            ),
+        )
+        db.session.add(ghost_alert)
+        _maybe_notify(ghost_alert, profile, None)
+        emitted += 1
+        logger.warning("Device fantasma no ARP: %s (%s)", mac, ip)
+
+    if emitted:
+        db.session.commit()
+    return emitted
 
 
 # ---------------------------------------------------------------------------
@@ -838,6 +1067,9 @@ def run_port_scan(profile_id: int):
                         device_id=device_id, protocol=proto, port=port_num
                     ).first()
 
+                    # Baseline: porta autorizada que reaparece não alerta.
+                    port_authorized = bool(existing and existing.is_authorized)
+
                     if existing:
                         existing.last_seen_open_at = now
                         existing.last_seen_closed_at = None
@@ -858,7 +1090,13 @@ def run_port_scan(profile_id: int):
 
                     # Só emite alerta para portas OPEN — portas filtered são
                     # gravadas mas não geram ruído (firewall as bloqueia, sem risco).
-                    if pi.state == "open":
+                    # Suprime se a porta está no baseline (autorizada) ou se já
+                    # houve alerta recente para esta porta (janela de dedupe).
+                    if (
+                        pi.state == "open"
+                        and not port_authorized
+                        and not _recent_port_alert_exists(device_id, proto, port_num)
+                    ):
                         new_port_alert = Alert(
                             profile_id=profile.id,
                             device_id=device_id,
@@ -911,7 +1149,11 @@ def run_port_scan(profile_id: int):
                         # um firewall caiu ou uma nova regra foi aplicada.
                         # Vale um alerta mesmo sem "nova porta".
                         prev_state = p.state
-                        if prev_state and pi.state and prev_state != pi.state:
+                        if (
+                            prev_state and pi.state and prev_state != pi.state
+                            and not p.is_authorized
+                            and not _recent_port_alert_exists(device_id, proto, port_num)
+                        ):
                             state_alert = Alert(
                                 profile_id=profile.id,
                                 device_id=device_id,
@@ -997,6 +1239,437 @@ def _severity_for_port(port_num: int) -> "Severity":
     """Retorna Severity.CRITICAL para portas de alto risco, WARNING para as demais."""
     from app.models import Severity
     return Severity.CRITICAL if port_num in _CRITICAL_PORTS else Severity.WARNING
+
+
+def _recent_port_alert_exists(device_id: int, proto: str, port_num: int) -> bool:
+    """Dedupe de alertas de porta: já existe alerta NEW_PORT para este
+    device+porta dentro da janela PORT_ALERT_DEDUP_HOURS?
+
+    Evita spam quando o estado oscila (flapping filtered<->open) entre scans.
+    As mensagens de alerta sempre contêm "{proto}/{porta} (", usado como chave.
+    """
+    from flask import current_app
+
+    from app.extensions import db
+    from app.models import Alert, AlertType
+
+    try:
+        hours = int(current_app.config.get("PORT_ALERT_DEDUP_HOURS", 6))
+    except RuntimeError:
+        hours = 6
+    if hours <= 0:
+        return False
+
+    cutoff = _utcnow() - timedelta(hours=hours)
+    return db.session.query(Alert.id).filter(
+        Alert.device_id == device_id,
+        Alert.alert_type == AlertType.NEW_PORT,
+        Alert.created_at >= cutoff,
+        Alert.message.contains(f"{proto}/{port_num} ("),
+    ).first() is not None
+
+
+def _record_detected_open_port(
+    profile, device_id: int, device_display: str, ip_str: str, pi, now, source: str,
+) -> bool:
+    """Upsert leve de uma porta encontrada por checks auxiliares (críticas/UDP).
+
+    Diferente de run_port_scan, nunca fecha portas — apenas registra/reabre a
+    porta detectada e emite alerta quando é um achado novo em estado 'open',
+    respeitando baseline (is_authorized) e a janela de dedupe.
+
+    Returns: True se um alerta foi emitido.
+    """
+    from app.extensions import db
+    from app.models import Alert, AlertType, Port
+
+    port_row = Port.query.filter_by(
+        device_id=device_id, protocol=pi.protocol, port=pi.port
+    ).first()
+
+    if port_row is None:
+        port_row = Port(
+            device_id=device_id,
+            protocol=pi.protocol,
+            port=pi.port,
+            state=pi.state,
+            service_name=pi.service_name,
+            service_version=pi.service_version,
+            first_open_at=now,
+            last_seen_open_at=now,
+        )
+        db.session.add(port_row)
+        is_new_finding = pi.state == "open"
+        authorized = False
+    else:
+        # Achado novo = estava fechada, ou transicionou para open agora.
+        is_new_finding = pi.state == "open" and (
+            port_row.last_seen_closed_at is not None or port_row.state != "open"
+        )
+        authorized = port_row.is_authorized
+        port_row.last_seen_open_at = now
+        port_row.last_seen_closed_at = None
+        port_row.state = pi.state
+        if pi.service_name:
+            port_row.service_name = pi.service_name
+        if pi.service_version:
+            port_row.service_version = pi.service_version
+
+    if not is_new_finding or authorized:
+        return False
+    if _recent_port_alert_exists(device_id, pi.protocol, pi.port):
+        return False
+
+    alert = Alert(
+        profile_id=profile.id,
+        device_id=device_id,
+        alert_type=AlertType.NEW_PORT,
+        severity=_severity_for_port(pi.port),
+        message=(
+            f"Nova porta em {device_display} ({ip_str}): "
+            f"{pi.protocol}/{pi.port} ({pi.service_name}) [{pi.state}] — via {source}"
+        ),
+    )
+    db.session.add(alert)
+    _maybe_notify(alert, profile, None)
+    return True
+
+
+def _online_devices_with_ip(profile_id: int):
+    """[(Device, DeviceIp)] dos devices online (last_seen dentro do threshold)."""
+    from flask import current_app
+
+    from app.extensions import db
+    from app.models import Device, DeviceIp
+
+    online_minutes = current_app.config.get("HOST_ONLINE_THRESHOLD_MINUTES", 70)
+    cutoff = _utcnow() - timedelta(minutes=online_minutes)
+    return (
+        db.session.query(Device, DeviceIp)
+        .join(DeviceIp, Device.id == DeviceIp.device_id)
+        .filter(
+            Device.profile_id == profile_id,
+            DeviceIp.is_current.is_(True),
+            Device.last_seen_at >= cutoff,
+        )
+        .all()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Job: Check rápido de portas críticas
+# ---------------------------------------------------------------------------
+
+def critical_ports_check(profile_id: int):
+    """Escaneia APENAS as CRITICAL_PORTS nos devices online do perfil.
+
+    Probe leve (~11 portas, sem -sV) para detectar exposição grave
+    (Telnet/SMB/RDP/VNC...) em horas em vez de esperar o ciclo de 24h do
+    port scan completo. Nunca fecha portas — só registra novas aberturas.
+    """
+    from app.extensions import db
+    from app.models import Profile, Scan, ScanStatus, ScanType
+    from app.scanner.ports import CRITICAL_PORTS, scan_ports_for_host
+
+    profile = db.session.get(Profile, profile_id)
+    if not profile or not profile.is_active:
+        return
+
+    rows = _online_devices_with_ip(profile_id)
+    if not rows:
+        logger.info("Check de portas críticas '%s': nenhum device online.", profile.name)
+        return
+
+    ports_csv = ",".join(str(p) for p in sorted(CRITICAL_PORTS))
+    timeout_args = "--host-timeout 60s"
+    if _has_root():
+        nmap_args = f"-Pn -sS -T4 {timeout_args}"
+    else:
+        nmap_args = f"-Pn -sT -T4 {timeout_args}"
+
+    # Extrai dados antes das threads (sem acesso a DB dentro delas).
+    tasks = [
+        {"device_id": d.id, "device_display": d.display_name, "ip": dip.ip}
+        for d, dip in rows
+    ]
+
+    scan_start = _utcnow()
+    alerts_emitted = 0
+    max_workers = max(1, profile.max_concurrent_scans)
+
+    def _scan_one(task):
+        port_list, host_found = scan_ports_for_host(
+            task["ip"], ports=ports_csv, arguments=nmap_args,
+        )
+        return task, port_list, host_found
+
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for task in tasks:
+                futures.append(executor.submit(_scan_one, task))
+                time.sleep(0.2)
+
+            for future in futures:
+                try:
+                    task, port_results, host_found = future.result(timeout=300)
+                except Exception:
+                    logger.exception("Erro no check de porta crítica de um device")
+                    continue
+                if not host_found:
+                    continue
+                now = _utcnow()
+                for pi in port_results:
+                    if pi.state != "open":
+                        continue  # check rápido: só portas abertas interessam
+                    if _record_detected_open_port(
+                        profile, task["device_id"], task["device_display"],
+                        task["ip"], pi, now, source="check de portas críticas",
+                    ):
+                        alerts_emitted += 1
+                db.session.commit()
+
+        db.session.add(Scan(
+            profile_id=profile.id,
+            scan_type=ScanType.PORT_SCAN,
+            target_ip=None,
+            started_at=scan_start,
+            finished_at=_utcnow(),
+            hosts_found=alerts_emitted,
+            status=ScanStatus.SUCCESS,
+            result_summary=(
+                f"Check de portas críticas: {len(tasks)} device(s) online, "
+                f"{alerts_emitted} alerta(s) de porta crítica aberta."
+            ),
+        ))
+        db.session.commit()
+        logger.info(
+            "Check de portas críticas '%s': %d devices, %d alertas.",
+            profile.name, len(tasks), alerts_emitted,
+        )
+    except Exception:
+        db.session.rollback()
+        logger.exception("Erro no check de portas críticas (profile %d)", profile_id)
+
+
+# ---------------------------------------------------------------------------
+# Job: Scan UDP periódico
+# ---------------------------------------------------------------------------
+
+def run_udp_scan(profile_id: int):
+    """Scan UDP de um conjunto pequeno de portas nos devices online.
+
+    Requer root (-sU usa raw sockets) — o registro do job já filtra isso.
+    Alerta apenas para portas em estado 'open' (open|filtered é ruído inerente
+    ao UDP e seria falso-positivo em massa).
+    """
+    from app.extensions import db
+    from app.models import Profile, Scan, ScanStatus, ScanType
+    from app.scanner.ports import UDP_SCAN_PORTS, scan_ports_for_host
+
+    if not _has_root():
+        logger.warning("Scan UDP exige root — ignorando (profile %d).", profile_id)
+        return
+
+    profile = db.session.get(Profile, profile_id)
+    if not profile or not profile.is_active:
+        return
+
+    rows = _online_devices_with_ip(profile_id)
+    if not rows:
+        logger.info("Scan UDP '%s': nenhum device online.", profile.name)
+        return
+
+    nmap_args = "-Pn -sU -sV --version-intensity 0 -T4 --host-timeout 120s"
+    tasks = [
+        {"device_id": d.id, "device_display": d.display_name, "ip": dip.ip}
+        for d, dip in rows
+    ]
+
+    scan_start = _utcnow()
+    alerts_emitted = 0
+    open_found = 0
+    max_workers = max(1, profile.max_concurrent_scans)
+
+    def _scan_one(task):
+        port_list, host_found = scan_ports_for_host(
+            task["ip"], ports=UDP_SCAN_PORTS, arguments=nmap_args,
+        )
+        return task, port_list, host_found
+
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+            for task in tasks:
+                futures.append(executor.submit(_scan_one, task))
+                time.sleep(0.3)
+
+            for future in futures:
+                try:
+                    task, port_results, host_found = future.result(timeout=600)
+                except Exception:
+                    logger.exception("Erro no scan UDP de um device")
+                    continue
+                if not host_found:
+                    continue
+                now = _utcnow()
+                for pi in port_results:
+                    if pi.state != "open":
+                        continue  # UDP: open|filtered é indeterminado, não alertar
+                    open_found += 1
+                    if _record_detected_open_port(
+                        profile, task["device_id"], task["device_display"],
+                        task["ip"], pi, now, source="scan UDP",
+                    ):
+                        alerts_emitted += 1
+                db.session.commit()
+
+        db.session.add(Scan(
+            profile_id=profile.id,
+            scan_type=ScanType.PORT_SCAN,
+            target_ip=None,
+            started_at=scan_start,
+            finished_at=_utcnow(),
+            hosts_found=open_found,
+            status=ScanStatus.SUCCESS,
+            result_summary=(
+                f"Scan UDP: {len(tasks)} device(s), {open_found} porta(s) UDP abertas, "
+                f"{alerts_emitted} alerta(s)."
+            ),
+        ))
+        db.session.commit()
+        logger.info(
+            "Scan UDP '%s': %d devices, %d portas abertas, %d alertas.",
+            profile.name, len(tasks), open_found, alerts_emitted,
+        )
+    except Exception:
+        db.session.rollback()
+        logger.exception("Erro no scan UDP (profile %d)", profile_id)
+
+
+# ---------------------------------------------------------------------------
+# Job: Verificação de certificados TLS
+# ---------------------------------------------------------------------------
+
+def _fetch_cert_not_after(ip: str, port: int, timeout: int = 8):
+    """Conecta na porta TLS e retorna (not_after_utc_naive, subject_str).
+
+    Lança exceção em falha de conexão/handshake — o chamador decide ignorar.
+    Não valida a cadeia (queremos ler o cert mesmo se self-signed).
+    """
+    import socket
+    import ssl
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    with socket.create_connection((ip, port), timeout=timeout) as sock:
+        with ctx.wrap_socket(sock) as ssock:
+            der = ssock.getpeercert(binary_form=True)
+
+    from cryptography import x509
+
+    cert = x509.load_der_x509_certificate(der)
+    # cryptography >= 42 expõe not_valid_after_utc (aware); versões antigas
+    # só not_valid_after (naive UTC).
+    not_after = getattr(cert, "not_valid_after_utc", None)
+    if not_after is not None:
+        not_after = not_after.replace(tzinfo=None)
+    else:
+        not_after = cert.not_valid_after
+    try:
+        subject = cert.subject.rfc4514_string()
+    except Exception:
+        subject = ""
+    return not_after, subject
+
+
+def check_tls_certificates():
+    """Job global: verifica expiração de certificados TLS em portas HTTPS abertas.
+
+    Uma conexão TCP por porta — custo de rede desprezível. Alerta WARNING
+    quando o certificado expira em <= TLS_CERT_WARN_DAYS dias e CRITICAL
+    quando já expirou. Dedupe: um alerta por device+porta por janela de 7 dias.
+    """
+    from flask import current_app
+
+    from app.extensions import db
+    from app.models import Alert, AlertType, Device, Port, Profile, Severity
+    from app.scanner.ports import TLS_PORTS
+
+    warn_days = int(current_app.config.get("TLS_CERT_WARN_DAYS", 15))
+    online_minutes = current_app.config.get("HOST_ONLINE_THRESHOLD_MINUTES", 70)
+    seen_cutoff = _utcnow() - timedelta(minutes=online_minutes)
+
+    rows = (
+        db.session.query(Port, Device)
+        .join(Device, Port.device_id == Device.id)
+        .filter(
+            Port.last_seen_closed_at.is_(None),
+            Port.state == "open",
+            Port.port.in_(list(TLS_PORTS)),
+            Device.last_seen_at >= seen_cutoff,
+        )
+        .all()
+    )
+
+    checked = alerts = 0
+    for port_row, device in rows:
+        ip = device.current_ip
+        if not ip:
+            continue
+        try:
+            not_after, subject = _fetch_cert_not_after(ip, port_row.port)
+        except Exception as exc:
+            logger.debug("TLS check falhou para %s:%d: %s", ip, port_row.port, exc)
+            continue
+        checked += 1
+
+        days_left = (not_after - _utcnow()).days
+        if days_left > warn_days:
+            continue
+
+        # Dedupe: alerta recente (7 dias) ou aberto para o mesmo device+porta.
+        dedup_cutoff = _utcnow() - timedelta(days=7)
+        existing = Alert.query.filter(
+            Alert.device_id == device.id,
+            Alert.alert_type == AlertType.TLS_CERT_EXPIRING,
+            Alert.message.contains(f"{ip}:{port_row.port}"),
+            db.or_(
+                Alert.acknowledged_at.is_(None),
+                Alert.created_at >= dedup_cutoff,
+            ),
+        ).first()
+        if existing:
+            continue
+
+        if days_left < 0:
+            severity = Severity.CRITICAL
+            status_txt = f"EXPIRADO há {-days_left} dia(s)"
+        else:
+            severity = Severity.WARNING
+            status_txt = f"expira em {days_left} dia(s)"
+
+        profile = db.session.get(Profile, device.profile_id)
+        alert = Alert(
+            profile_id=device.profile_id,
+            device_id=device.id,
+            alert_type=AlertType.TLS_CERT_EXPIRING,
+            severity=severity,
+            message=(
+                f"Certificado TLS em {device.display_name} ({ip}:{port_row.port}) "
+                f"{status_txt} (validade até {not_after:%d/%m/%Y})"
+                + (f" — {subject}" if subject else "")
+            ),
+        )
+        db.session.add(alert)
+        if profile:
+            _maybe_notify(alert, profile, device)
+        alerts += 1
+
+    db.session.commit()
+    logger.info("Verificação TLS: %d certificado(s) lidos, %d alerta(s).", checked, alerts)
 
 
 # ---------------------------------------------------------------------------
@@ -1207,12 +1880,15 @@ def _run_on_demand_scan_inner(device_id: int, scan_types: list[str]) -> dict:
 
     # --- Vulnerability scan básico (nmap --script=vuln) ---
     if "vuln" in scan_types:
-        from app.models import Vulnerability
+        from app.models import Profile, Vulnerability
         vuln_result = _scan_vulnerabilities(ip)
         results["vuln"] = vuln_result
 
+        vuln_profile = db.session.get(Profile, device.profile_id)
+
         # Salva vulnerabilidades no banco
         for v in vuln_result.get("vulns", []):
+            is_vulnerable = v.get("is_vulnerable", False)
             existing = Vulnerability.query.filter_by(
                 device_id=device.id,
                 script_name=v["script"],
@@ -1220,11 +1896,17 @@ def _run_on_demand_scan_inner(device_id: int, scan_types: list[str]) -> dict:
                 protocol=v.get("protocol", ""),
             ).first()
             if existing:
+                # Alerta só na transição não-vulnerável → vulnerável (sem spam
+                # em re-scans de algo já conhecido).
+                newly_vulnerable = is_vulnerable and (
+                    not existing.is_vulnerable or existing.resolved_at is not None
+                )
                 existing.last_seen_at = now
                 existing.output = v["output"]
-                existing.is_vulnerable = v.get("is_vulnerable", False)
+                existing.is_vulnerable = is_vulnerable
                 existing.resolved_at = None
             else:
+                newly_vulnerable = is_vulnerable
                 db.session.add(Vulnerability(
                     device_id=device.id,
                     port=v["port"],
@@ -1232,10 +1914,32 @@ def _run_on_demand_scan_inner(device_id: int, scan_types: list[str]) -> dict:
                     service=v.get("service", ""),
                     script_name=v["script"],
                     output=v["output"],
-                    is_vulnerable=v.get("is_vulnerable", False),
+                    is_vulnerable=is_vulnerable,
                     found_at=now,
                     last_seen_at=now,
                 ))
+
+            # Vulnerabilidade confirmada precisa aparecer na lista de alertas —
+            # o card "Vulnerabilidades Abertas" do dashboard conta estas linhas
+            # e cada uma deve ter alerta correspondente.
+            if newly_vulnerable:
+                port_txt = (
+                    f" na porta {v.get('protocol', 'tcp') or 'tcp'}/{v['port']}"
+                    if v.get("port") else ""
+                )
+                vuln_alert = Alert(
+                    profile_id=device.profile_id,
+                    device_id=device.id,
+                    alert_type=AlertType.VULNERABILITY,
+                    severity=Severity.CRITICAL,
+                    message=(
+                        f"Vulnerabilidade confirmada em {device.display_name} ({ip})"
+                        f"{port_txt}: {v['script']}"
+                    ),
+                )
+                db.session.add(vuln_alert)
+                if vuln_profile:
+                    _maybe_notify(vuln_alert, vuln_profile, device)
 
     # --- SNMP ---
     if "snmp" in scan_types:

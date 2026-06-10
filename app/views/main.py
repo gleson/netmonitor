@@ -1,13 +1,12 @@
 """Blueprint principal — Dashboard."""
 
-from datetime import timedelta
-
-from flask import Blueprint, render_template, request, redirect, url_for, current_app, session
+from flask import Blueprint, render_template, request, redirect, url_for, session
 from flask_login import login_required
 
 from app.extensions import db
-from app.models import Profile, Device, Alert, _utcnow
+from app.models import Profile
 from app.profile_utils import get_active_profile_id
+from app.stats import compute_dashboard_stats
 
 main_bp = Blueprint("main", __name__, template_folder="../templates/main")
 
@@ -41,28 +40,7 @@ def dashboard():
 
     stats = {}
     if selected_profile:
-        now = _utcnow()
-        online_minutes = current_app.config.get("HOST_ONLINE_THRESHOLD_MINUTES", 70)
-        threshold = now - timedelta(minutes=online_minutes)
-        yesterday = now - timedelta(hours=24)
-
-        total_devices = Device.query.filter_by(profile_id=selected_profile.id).count()
-        online_devices = Device.query.filter_by(profile_id=selected_profile.id).filter(
-            Device.last_seen_at >= threshold
-        ).count()
-        new_devices_24h = Device.query.filter_by(profile_id=selected_profile.id).filter(
-            Device.first_seen_at >= yesterday
-        ).count()
-        open_alerts = Alert.query.filter_by(profile_id=selected_profile.id).filter(
-            Alert.acknowledged_at.is_(None)
-        ).count()
-
-        stats = {
-            "total_devices": total_devices,
-            "online_devices": online_devices,
-            "new_devices_24h": new_devices_24h,
-            "open_alerts": open_alerts,
-        }
+        stats = compute_dashboard_stats(selected_profile.id)
 
     return render_template(
         "main/dashboard.html",

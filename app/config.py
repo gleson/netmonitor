@@ -98,6 +98,49 @@ class Config:
     # Sem esta variável, a community é armazenada em texto puro.
     FERNET_KEY = os.environ.get("FERNET_KEY", "")
 
+    # --- Correlação CVE (NVD) ---
+    # Job diário que correlaciona service_name/service_version das portas
+    # abertas com CVEs conhecidos via API do NVD. Não gera tráfego na rede
+    # local (só consultas HTTPS externas, com cache em cve_cache).
+    CVE_LOOKUP_ENABLED = os.environ.get("CVE_LOOKUP_ENABLED", "1") == "1"
+    CVE_LOOKUP_INTERVAL_HOURS = int(os.environ.get("CVE_LOOKUP_INTERVAL_HOURS", 24))
+    CVE_CACHE_TTL_DAYS = int(os.environ.get("CVE_CACHE_TTL_DAYS", 7))
+    # CVSS mínimo para registrar Vulnerability + alerta (>=9.0 vira CRITICAL).
+    CVE_MIN_CVSS_ALERT = float(os.environ.get("CVE_MIN_CVSS_ALERT", 7.0))
+    # Máximo de consultas não-cacheadas à API por execução (rate-limit NVD).
+    CVE_MAX_LOOKUPS_PER_RUN = int(os.environ.get("CVE_MAX_LOOKUPS_PER_RUN", 30))
+    # API key do NVD (opcional). Com chave o limite sobe de ~5 para ~50 req/30s
+    # e a pausa entre consultas cai de 6.5s para 0.7s. Solicite em
+    # https://nvd.nist.gov/developers/request-an-api-key
+    NVD_API_KEY = os.environ.get("NVD_API_KEY", "")
+    # Catálogo CISA KEV (vulnerabilidades sob exploração ativa) — feed público,
+    # sem LLM nem API key. CVEs em KEV viram alerta CRITICAL is_priority=True.
+    CVE_KEV_ENABLED = os.environ.get("CVE_KEV_ENABLED", "1") == "1"
+    CVE_KEV_REFRESH_HOURS = int(os.environ.get("CVE_KEV_REFRESH_HOURS", 24))
+
+    # --- Check rápido de portas críticas ---
+    # Escaneia apenas CRITICAL_PORTS (~11 portas) nos devices online a cada
+    # N minutos — detecta exposição grave em horas em vez de 24h, com tráfego
+    # mínimo. 0 desativa.
+    CRITICAL_PORTS_CHECK_INTERVAL_MINUTES = int(
+        os.environ.get("CRITICAL_PORTS_CHECK_INTERVAL_MINUTES", 120)
+    )
+
+    # --- Scan UDP ---
+    # Scan semanal de um conjunto pequeno de portas UDP (DNS, SNMP, NTP,
+    # NetBIOS, SSDP...). Requer root (-sU usa raw sockets). 0 desativa.
+    UDP_SCAN_INTERVAL_HOURS = int(os.environ.get("UDP_SCAN_INTERVAL_HOURS", 168))
+
+    # --- Verificação de certificados TLS ---
+    # Checa expiração de certificados em portas HTTPS abertas. 0 desativa.
+    TLS_CHECK_INTERVAL_HOURS = int(os.environ.get("TLS_CHECK_INTERVAL_HOURS", 24))
+    TLS_CERT_WARN_DAYS = int(os.environ.get("TLS_CERT_WARN_DAYS", 15))
+
+    # --- Dedupe de alertas de porta ---
+    # Não re-emite o mesmo alerta (device+porta) dentro desta janela, evitando
+    # spam quando o estado oscila (flapping filtered<->open).
+    PORT_ALERT_DEDUP_HOURS = int(os.environ.get("PORT_ALERT_DEDUP_HOURS", 6))
+
     @classmethod
     def validate(cls):
         """Hook para validação específica por ambiente. Override em subclasses."""
@@ -133,6 +176,9 @@ class TestingConfig(Config):
     # Desativa rate-limit e HTTPS forçado nos testes.
     RATELIMIT_ENABLED = False
     SESSION_COOKIE_SECURE = False
+    # Sem chamadas de rede externas em testes.
+    CVE_LOOKUP_ENABLED = False
+    CVE_KEV_ENABLED = False
 
 
 config_by_name = {

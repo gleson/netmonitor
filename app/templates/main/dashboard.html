@@ -57,6 +57,49 @@
     </div>
 </div>
 
+<!-- Cards de segurança -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <a href="{{ url_for('devices.device_list') }}" class="text-decoration-none">
+            <div class="card bg-dark border-danger h-100">
+                <div class="card-body text-center">
+                    <h6 class="card-subtitle text-muted mb-2">
+                        <i class="bi bi-exclamation-triangle-fill text-danger"></i> Devices c/ Porta Crítica
+                    </h6>
+                    <h3 class="text-danger" id="statCriticalPortDevices">{{ stats.critical_port_devices }}</h3>
+                    <small class="text-muted">Telnet, SMB, RDP, VNC...</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="{{ url_for('alerts.alert_list') }}" class="text-decoration-none">
+            <div class="card bg-dark border-warning h-100">
+                <div class="card-body text-center">
+                    <h6 class="card-subtitle text-muted mb-2">
+                        <i class="bi bi-bug-fill text-warning"></i> Vulnerabilidades Abertas
+                    </h6>
+                    <h3 class="text-warning" id="statOpenVulnerabilities">{{ stats.open_vulnerabilities }}</h3>
+                    <small class="text-muted">Confirmadas e não resolvidas</small>
+                </div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="{{ url_for('devices.device_list', status='online') }}" class="text-decoration-none">
+            <div class="card bg-dark border-danger h-100">
+                <div class="card-body text-center">
+                    <h6 class="card-subtitle text-muted mb-2">
+                        <i class="bi bi-shield-x text-danger"></i> Não Autorizados Online
+                    </h6>
+                    <h3 class="text-danger" id="statUnauthorizedOnline">{{ stats.unauthorized_online }}</h3>
+                    <small class="text-muted">Situação "Não Autorizado" ativos agora</small>
+                </div>
+            </div>
+        </a>
+    </div>
+</div>
+
 <!-- Gráficos -->
 <div class="row g-3">
     <div class="col-md-8">
@@ -369,6 +412,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 set('statOnlineDevices', data.online_devices);
                 set('statNewDevices', data.new_devices_24h);
                 set('statOpenAlerts', data.open_alerts);
+                set('statCriticalPortDevices', data.critical_port_devices);
+                set('statOpenVulnerabilities', data.open_vulnerabilities);
+                set('statUnauthorizedOnline', data.unauthorized_online);
             })
             .catch(() => {});
     }
